@@ -1,4 +1,6 @@
 proxy_HTTP = [
+    "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
     "https://api.openproxylist.xyz/http.txt",
     "https://alexa.lr2b.com/proxylist.txt",
     "https://rootjazz.com/proxies/proxies.txt",
@@ -10,6 +12,8 @@ proxy_HTTP = [
 ]
 
 proxy_HTTPS = [
+    "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/https.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/https/data.txt",
     "https://www.sslproxies.org/",
     "https://www.proxy-list.download/api/v1/get?type=https",
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=https&timeout=10000&country=all&ssl=all&anonymity=all",
@@ -18,6 +22,8 @@ proxy_HTTPS = [
 ]
 
 proxy_SOCKS4 = [
+    "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks4.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks4/data.txt",
     "https://api.openproxylist.xyz/socks4.txt",
     "https://www.proxy-list.download/api/v1/get?type=socks4",
     "https://www.socks-proxy.net/",
@@ -29,6 +35,8 @@ proxy_SOCKS4 = [
 ]
 
 proxy_SOCKS5 = [
+    "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
     "https://www.proxy-list.download/api/v1/get?type=socks5",
     "https://api.openproxylist.xyz/socks5.txt",
     "https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/socks5/socks5.txt",
