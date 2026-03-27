@@ -3,6 +3,7 @@ import os
 import time
 from datetime import datetime
 from typing import List, Tuple
+from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 from colorama import Fore, init
@@ -16,16 +17,18 @@ console = Console()
 
 init(autoreset=True)
 
-from links import proxy_HTTP, proxy_HTTPS, proxy_SOCKS4, proxy_SOCKS5
+from links import (proxy_HTTP, proxy_HTTPS, proxy_MTPROTO, proxy_SOCKS4,
+                   proxy_SOCKS5)
 
 proxy_sources = {
     "HTTP": proxy_HTTP,
     "HTTPS": proxy_HTTPS,
     "SOCKS4": proxy_SOCKS4,
     "SOCKS5": proxy_SOCKS5,
+    "MTPROTO": proxy_MTPROTO,
 }
 
-proxy_mapping = {1: "HTTP", 2: "HTTPS", 3: "SOCKS4", 4: "SOCKS5"}
+proxy_mapping = {1: "HTTP", 2: "HTTPS", 3: "SOCKS4", 4: "SOCKS5", 5: "MTPROTO"}
 
 
 def parse_proxy(proxy: str) -> str:
@@ -38,9 +41,129 @@ def parse_proxy(proxy: str) -> str:
     return proxy
 
 
+def parse_mtproto_link(link: str) -> dict | None:
+    try:
+        if not link.startswith("https://t.me/proxy"):
+            return None
+        parsed = urlparse(link)
+        params = parse_qs(parsed.query)
+        server = params.get("server", [""])[0]
+        port = params.get("port", [""])[0]
+        secret = params.get("secret", [""])[0]
+        if server and port and secret:
+            return {"server": server, "port": port, "secret": secret}
+    except:
+        pass
+    return None
+
+
+async def check_mtproto_tcp(server: str, port: int, timeout: int) -> Tuple[bool, float]:
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(server, port),
+            timeout=timeout
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True, 0
+    except:
+        return False, 0
+
+
+async def check_mtproto_handshake(server: str, port: int, secret: str, timeout: int) -> Tuple[bool, float]:
+    try:
+        secret_bytes = bytes.fromhex(secret) if len(secret) % 2 == 0 else secret.encode()
+        
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(server, port),
+            timeout=timeout
+        )
+        
+        try:
+            writer.write(secret_bytes)
+            await writer.drain()
+            
+            data = await asyncio.wait_for(reader.read(2048), timeout=timeout)
+            
+            if len(data) > 0:
+                writer.close()
+                await writer.wait_closed()
+                return True, 1
+        except:
+            pass
+        
+        writer.close()
+        await writer.wait_closed()
+        return False, 0
+    except:
+        return False, 0
+
+
+async def check_mtproto_http(server: str, port: int, secret: str, timeout: int) -> Tuple[bool, float]:
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(server, port),
+            timeout=timeout
+        )
+        
+        http_request = b"GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n"
+        
+        try:
+            writer.write(http_request)
+            await writer.drain()
+            
+            data = await asyncio.wait_for(reader.read(4096), timeout=timeout)
+            
+            writer.close()
+            await writer.wait_closed()
+            
+            if data and (b"HTTP" in data or len(data) > 0):
+                return True, 1
+        except:
+            pass
+        
+        writer.close()
+        await writer.wait_closed()
+        return False, 0
+    except:
+        return False, 0
+
+
+async def check_mtproto_all_methods(server: str, port: int, secret: str, timeout: int) -> Tuple[bool, float]:
+    start = time.time()
+    
+    ok, _ = await check_mtproto_tcp(server, port, timeout)
+    if not ok:
+        ok, _ = await check_mtproto_handshake(server, port, secret, timeout)
+    if not ok:
+        ok, _ = await check_mtproto_http(server, port, secret, timeout)
+    
+    if ok:
+        speed = round((time.time() - start) * 1000, 1)
+        return True, speed
+    return False, 0.0
+
+
 async def check_proxy(session, proxy: str, proxy_type: str, test_url: str = "https://httpbin.org/ip", timeout: int = 10) -> Tuple[bool, float]:
     try:
         start = time.time()
+        
+        if proxy_type.upper() == "MTPROTO":
+            mt_data = parse_mtproto_link(proxy)
+            if not mt_data:
+                return False, 0.0
+            
+            ok, _ = await check_mtproto_all_methods(
+                mt_data["server"], 
+                int(mt_data["port"]), 
+                mt_data["secret"], 
+                timeout
+            )
+            
+            if ok:
+                speed = round((time.time() - start) * 1000, 1)
+                return True, speed
+            return False, 0.0
         
         clean_proxy = parse_proxy(proxy)
 
@@ -112,7 +235,9 @@ async def fetch_proxies(url: str) -> List[str]:
                         line = line.strip()
                         if not line:
                             continue
-                        if ':' in line:
+                        if "t.me/proxy" in line.lower():
+                            proxies.append(line)
+                        elif ':' in line:
                             if any(line.lower().startswith(p) for p in ("http://", "https://", "socks4://", "socks5://", "socks4h://", "socks5h://")):
                                 proxies.append(line)
                             elif line.count(':') == 1:
@@ -172,6 +297,7 @@ def main_menu():
     console.print("[2] HTTPS Proxy")
     console.print("[3] SOCKS4 Proxy")
     console.print("[4] SOCKS5 Proxy")
+    console.print("[5] MTPROTO Proxy")
     console.print("[0] Exit")
 
 
@@ -188,7 +314,7 @@ async def main():
         if choice == 0:
             console.print("\n[red][!] Exiting...[/red]")
             break
-        elif choice not in [1, 2, 3, 4]:
+        elif choice not in [1, 2, 3, 4, 5]:
             console.print("\n[red][!] Invalid option![/red]")
             time.sleep(1)
             continue

@@ -48,3 +48,9 @@ proxy_SOCKS5 = [
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=SOCKS5&timeout=10000&country=all&ssl=all&anonymity=all",
     "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-socks5.txt",
 ]
+
+proxy_MTPROTO = [
+    "https://raw.githubusercontent.com/ALIILAPRO/MTProtoProxy/main/mtproto.txt",
+    "https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt",
+    "https://raw.githubusercontent.com/Grim1313/mtproto-for-telegram/master/all_proxies.txt",
+]
