@@ -1,4 +1,5 @@
 proxy_HTTP = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/HTTP.txt",
     "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
     "https://api.openproxylist.xyz/http.txt",
@@ -22,6 +23,7 @@ proxy_HTTPS = [
 ]
 
 proxy_SOCKS4 = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/SOCKS4.txt",
     "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks4.txt",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks4/data.txt",
     "https://api.openproxylist.xyz/socks4.txt",
@@ -35,6 +37,7 @@ proxy_SOCKS4 = [
 ]
 
 proxy_SOCKS5 = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/SOCKS5.txt",
     "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
     "https://www.proxy-list.download/api/v1/get?type=socks5",
@@ -50,7 +53,20 @@ proxy_SOCKS5 = [
 ]
 
 proxy_MTPROTO = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/MTProto.txt",
     "https://raw.githubusercontent.com/ALIILAPRO/MTProtoProxy/main/mtproto.txt",
     "https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt",
     "https://raw.githubusercontent.com/Grim1313/mtproto-for-telegram/master/all_proxies.txt",
+]
+
+proxy_HYSTERIA2 = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/Hysteria2.txt",
+]
+
+proxy_SHADOW_SOCKS = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/ShadowSocks.txt",
+]
+
+proxy_TROJAN = [
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/Trojan.txt",
 ]
