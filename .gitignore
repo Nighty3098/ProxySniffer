@@ -2,3 +2,4 @@ venv/
 src/proxies.txt
 src/__pycache__
 src/working_http_proxies.txt
+src/*.txt
