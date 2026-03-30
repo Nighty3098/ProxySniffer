@@ -1304,8 +1304,8 @@ async def check_proxies_async(
             tasks = {asyncio.create_task(bounded_check(p)): p for p in proxies_list}
             pending = set(tasks.keys())
             
-            try:
-                while pending:
+            while pending:
+                try:
                     done, pending = await asyncio.wait(
                         pending, timeout=0.5, return_when=asyncio.FIRST_COMPLETED
                     )
@@ -1317,24 +1317,25 @@ async def check_proxies_async(
                                     working.append((proxy, speed))
                         except Exception:
                             pass
-            except asyncio.CancelledError:
-                for t in pending:
-                    if not t.done():
-                        t.cancel()
-                try:
-                    done, still_pending = await asyncio.wait(pending, timeout=3, return_when=asyncio.ALL_COMPLETED)
-                    for t in done:
-                        try:
-                            proxy, ok, speed = t.result()
-                            if ok and speed > 0:
-                                working.append((proxy, speed))
-                        except Exception:
-                            pass
-                    for t in still_pending:
+                except asyncio.CancelledError:
+                    for t in pending:
                         if not t.done():
                             t.cancel()
-                except Exception:
-                    pass
+                    try:
+                        done, still_pending = await asyncio.wait(pending, timeout=3, return_when=asyncio.ALL_COMPLETED)
+                        for t in done:
+                            try:
+                                proxy, ok, speed = t.result()
+                                if ok and speed > 0:
+                                    working.append((proxy, speed))
+                            except Exception:
+                                pass
+                        for t in still_pending:
+                            if not t.done():
+                                t.cancel()
+                    except Exception:
+                        pass
+                    break
 
     working.sort(key=lambda x: x[1])
     return working
