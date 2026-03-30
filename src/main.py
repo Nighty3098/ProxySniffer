@@ -531,53 +531,15 @@ async def check_all_parallel(
                 status=f"[yellow]0/{len(proxies_list)}[/yellow] | [red]✗ 0[/red]",
             )
 
-            tasks = {asyncio.create_task(check_one(p)): p for p in proxy_tuples}
-            pending = set(tasks.keys())
+            tasks = [asyncio.create_task(check_one(p)) for p in proxy_tuples]
             
             try:
-                while pending:
-                    done, pending = await asyncio.wait(
-                        pending, timeout=0.5, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    for t in done:
-                        try:
-                            result = t.result()
-                            if result is None:
-                                failed_count += 1
-                                continue
-                            link, ptype, ok, speed = result
-                            if ok and speed > 0:
-                                working_count += 1
-                                results.append((link, speed))
-                            else:
-                                failed_count += 1
-                            
-                            checked = working_count + failed_count
-                            progress.update(
-                                task,
-                                advance=1,
-                                status=f"[cyan]{checked}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
-                            )
-                        except Exception:
-                            failed_count += 1
+                await asyncio.gather(*tasks, return_exceptions=True)
             except asyncio.CancelledError:
-                for t in pending:
+                for t in tasks:
                     if not t.done():
                         t.cancel()
-                try:
-                    done, still_pending = await asyncio.wait(pending, timeout=3, return_when=asyncio.ALL_COMPLETED)
-                    for t in done:
-                        try:
-                            link, ptype, ok, speed = t.result()
-                            if ok and speed > 0:
-                                results.append((link, speed))
-                        except Exception:
-                            pass
-                    for t in still_pending:
-                        if not t.done():
-                            t.cancel()
-                except Exception:
-                    pass
+                await asyncio.gather(*tasks, return_exceptions=True)
 
         results.sort(key=lambda x: x[1])
         return results
@@ -1238,7 +1200,7 @@ async def check_proxies_async(
     )
 
     test_url = "https://httpbin.org/ip"
-    working = []
+    working_list = []
     failed = 0
     checked = 0
     lock = asyncio.Lock()
@@ -1280,7 +1242,7 @@ async def check_proxies_async(
                     checked += 1
                     if not ok:
                         failed += 1
-
+                    
                     working = checked - failed
                     try:
                         progress.update(
@@ -1299,46 +1261,25 @@ async def check_proxies_async(
                         else:
                             console.print(f"[red]✗[/red] [dim]{p[:50]}[/dim]")
 
+                    if ok and speed > 0:
+                        async with lock:
+                            working_list.append((p, speed))
+                    
                     return p, ok, speed
 
-            tasks = {asyncio.create_task(bounded_check(p)): p for p in proxies_list}
-            pending = set(tasks.keys())
+            tasks = [asyncio.create_task(bounded_check(p)) for p in proxies_list]
             
-            while pending:
-                try:
-                    done, pending = await asyncio.wait(
-                        pending, timeout=0.5, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    for t in done:
-                        try:
-                            proxy, ok, speed = t.result()
-                            if ok and speed > 0:
-                                async with lock:
-                                    working.append((proxy, speed))
-                        except Exception:
-                            pass
-                except asyncio.CancelledError:
-                    for t in pending:
-                        if not t.done():
-                            t.cancel()
-                    try:
-                        done, still_pending = await asyncio.wait(pending, timeout=3, return_when=asyncio.ALL_COMPLETED)
-                        for t in done:
-                            try:
-                                proxy, ok, speed = t.result()
-                                if ok and speed > 0:
-                                    working.append((proxy, speed))
-                            except Exception:
-                                pass
-                        for t in still_pending:
-                            if not t.done():
-                                t.cancel()
-                    except Exception:
-                        pass
-                    break
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                # Collect results from completed tasks (they already added to 'working_list' list)
 
-    working.sort(key=lambda x: x[1])
-    return working
+    working_list.sort(key=lambda x: x[1])
+    return working_list
 
 
 async def fetch_proxies(url: str) -> List[str]:
