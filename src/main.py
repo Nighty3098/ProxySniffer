@@ -10,7 +10,6 @@ from typing import List, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 import aiohttp
-
 from colorama import Fore, init
 from rich.console import Console
 from rich.progress import (
@@ -38,8 +37,8 @@ from links import (
     proxy_SOCKS4,
     proxy_SOCKS5,
     proxy_TROJAN,
-    proxy_VMESS,
     proxy_VLESS,
+    proxy_VMESS,
 )
 
 proxy_sources = {
@@ -82,6 +81,7 @@ SINGBOX_POOL_SIZE = max(4, CPU_CORES)
 def get_free_port(start: int = 15000, end: int = 60000) -> int:
     import random
     import socket
+
     while True:
         port = random.randint(start, end)
         try:
@@ -331,7 +331,10 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                 if "tls" not in hy_outbound:
                     hy_outbound["tls"] = {"enabled": True}
                 hy_outbound["tls"] = hy_outbound.get("tls", {})
-                hy_outbound["tls"]["utls"] = {"enabled": True, "fingerprint": hy_data["fp"]}
+                hy_outbound["tls"]["utls"] = {
+                    "enabled": True,
+                    "fingerprint": hy_data["fp"],
+                }
 
             config["outbounds"].append(hy_outbound)
 
@@ -349,6 +352,7 @@ async def _check_singbox_async(
     proxy_link: str, proxy_type: str, port: int, timeout: int
 ) -> Tuple[str, str, bool, float]:
     import socket
+
     import aiohttp
 
     if not SINGBOX_INSTALLED:
@@ -369,7 +373,10 @@ async def _check_singbox_async(
         start = time.time()
 
         proc = await asyncio.create_subprocess_exec(
-            SINGBOX_PATH, "run", "-c", config_path,
+            SINGBOX_PATH,
+            "run",
+            "-c",
+            config_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -378,8 +385,7 @@ async def _check_singbox_async(
             await asyncio.sleep(0.5)
             try:
                 reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", port),
-                    timeout=1
+                    asyncio.open_connection("127.0.0.1", port), timeout=1
                 )
                 writer.close()
                 await writer.wait_closed()
@@ -391,7 +397,7 @@ async def _check_singbox_async(
                                 test_url,
                                 proxy=f"http://127.0.0.1:{port}",
                                 timeout=aiohttp.ClientTimeout(total=8),
-                                ssl=False
+                                ssl=False,
                             ) as resp:
                                 if resp.status in [200, 204, 201, 301, 302]:
                                     speed = round((time.time() - start) * 1000, 1)
@@ -435,7 +441,7 @@ async def check_with_singbox(
     try:
         result = await asyncio.wait_for(
             _check_singbox_async(proxy_link, proxy_type, port, timeout),
-            timeout=timeout + 5
+            timeout=timeout + 5,
         )
         return result[2], result[3]
     except asyncio.TimeoutError:
@@ -461,7 +467,7 @@ async def check_with_singbox_batch(
             try:
                 result = await asyncio.wait_for(
                     _check_singbox_async(link, ptype, port, timeout),
-                    timeout=timeout + 5
+                    timeout=timeout + 5,
                 )
                 return result
             except:
@@ -513,7 +519,7 @@ async def check_all_parallel(
             nonlocal working_count, failed_count
             async with semaphore:
                 link, ptype = proxy_tuple
-                
+
                 if ptype.upper() == "VLESS":
                     vl_data = parse_vless_link(link)
                     if vl_data:
@@ -525,7 +531,10 @@ async def check_all_parallel(
                                 checked = working_count + failed_count
                                 elapsed = time.time() - start_time
                                 if checked > 0:
-                                    eta_sec = int((elapsed / checked) * (len(proxies_list) - checked))
+                                    eta_sec = int(
+                                        (elapsed / checked)
+                                        * (len(proxies_list) - checked)
+                                    )
                                 else:
                                     eta_sec = 0
                                 progress.update(
@@ -534,7 +543,7 @@ async def check_all_parallel(
                                     status=f"[cyan]{checked}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
                                 )
                             return
-                
+
                 ok, speed = await check_with_singbox(link, ptype, timeout=8)
 
                 async with lock:
@@ -1197,7 +1206,7 @@ async def check_proxy(
                 ok, speed = await check_vless(vl_data, timeout=timeout)
                 if ok:
                     return True, speed
-            
+
             ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
             if ok:
                 return True, speed
@@ -1474,8 +1483,13 @@ async def main():
         console.print(f"[cyan][*] Loading {proxy_type} proxies...[/cyan]")
         proxies = await load_proxies_from_sources(proxy_type)
 
-        if proxy_type in ["VLESS", "VMESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"] and not SINGBOX_INSTALLED:
-            console.print(f"[red][!] WARNING: sing-box not found at {SINGBOX_PATH}[/red]")
+        if (
+            proxy_type in ["VLESS", "VMESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"]
+            and not SINGBOX_INSTALLED
+        ):
+            console.print(
+                f"[red][!] WARNING: sing-box not found at {SINGBOX_PATH}[/red]"
+            )
             console.print(f"[red][!] Using fallback socket check (less accurate)[/red]")
             time.sleep(2)
 
@@ -1507,7 +1521,9 @@ async def main():
         if not working and not stopped:
             console.print(f"\n[green][+] Found {len(working)} working proxies[/green]")
         elif stopped:
-            console.print(f"\n[cyan]Found {len(working)} working proxies before stop[/cyan]")
+            console.print(
+                f"\n[cyan]Found {len(working)} working proxies before stop[/cyan]"
+            )
 
         if not working:
             console.print(f"[yellow][*] No working proxies found[/yellow]")
