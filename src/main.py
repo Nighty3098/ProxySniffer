@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from multiprocessing import cpu_count
 from typing import List, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import aiohttp
 
@@ -38,6 +38,8 @@ from links import (
     proxy_SOCKS4,
     proxy_SOCKS5,
     proxy_TROJAN,
+    proxy_VMESS,
+    proxy_VLESS,
 )
 
 proxy_sources = {
@@ -49,8 +51,8 @@ proxy_sources = {
     "HYSTERIA2": proxy_HYSTERIA2,
     "SHADOW_SOCKS": proxy_SHADOW_SOCKS,
     "TROJAN": proxy_TROJAN,
-    "VMESS": proxy_SHADOW_SOCKS,
-    "VLESS": proxy_SHADOW_SOCKS,
+    "VMESS": proxy_VMESS,
+    "VLESS": proxy_VLESS,
 }
 
 proxy_mapping = {
@@ -67,7 +69,12 @@ proxy_mapping = {
 }
 
 SINGBOX_PATH = "/tmp/sing-box-1.13.4-linux-amd64/sing-box"
-TEST_URL = "http://www.gstatic.com/generate_204"
+SINGBOX_INSTALLED = os.path.exists(SINGBOX_PATH)
+TEST_URLS = [
+    "https://www.gstatic.com/generate_204",
+    "https://cp.cloudflare.com/generate_204",
+    "https://www.apple.com/library/test/success.html",
+]
 
 SINGBOX_POOL_SIZE = max(4, CPU_CORES)
 
@@ -90,6 +97,13 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
     try:
         config = {
             "log": {"level": "error"},
+            "dns": {
+                "independent_cache": True,
+                "servers": [
+                    {"address": "8.8.8.8"},
+                    {"address": "1.1.1.1"},
+                ],
+            },
             "inbounds": [{"tag": "mixed-in", "type": "mixed", "listen_port": 1080}],
             "outbounds": [],
         }
@@ -98,7 +112,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
             ss_data = parse_shadowsocks_link(proxy_link)
             if not ss_data:
                 return None
-            
+
             ss_outbound = {
                 "tag": "proxy",
                 "type": "shadowsocks",
@@ -107,7 +121,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                 "method": ss_data.get("method", "aes-256-gcm"),
                 "password": ss_data["password"],
             }
-            
+
             plugin = ss_data.get("plugin")
             if plugin:
                 if plugin.startswith("obfs"):
@@ -118,7 +132,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                         ss_outbound["plugin"]["conf"]["mode"] = "tls"
                 elif "v2ray-plugin" in plugin:
                     ss_outbound["plugin"] = {"type": "v2ray-plugin", "conf": {}}
-            
+
             config["outbounds"].append(ss_outbound)
 
         elif proxy_type.upper() == "TROJAN":
@@ -263,22 +277,18 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
             if security == "reality":
                 outbound["tls"] = {
                     "enabled": True,
-                    "insecure": vl_data.get("insecure", "0") == "1"
-                    or vl_data.get("allowInsecure", "0") == "1",
-                    "reality": {"enabled": True},
+                    "server_name": vl_data.get("sni", "www.apple.com"),
+                    "reality": {
+                        "public_key": vl_data.get("pbk", ""),
+                        "short_id": vl_data.get("sid", ""),
+                    },
                 }
-                if vl_data.get("pbk"):
-                    outbound["tls"]["reality"]["public_key"] = vl_data["pbk"]
-                if vl_data.get("sni"):
-                    outbound["tls"]["server_name"] = vl_data["sni"]
-                if vl_data.get("sid"):
-                    outbound["tls"]["reality"]["short_id"] = vl_data["sid"]
                 if vl_data.get("fp"):
                     outbound["tls"]["utls"] = {
                         "enabled": True,
                         "fingerprint": vl_data["fp"],
                     }
-                if flow:
+                if flow and flow not in ["", "none"]:
                     outbound["flow"] = flow
             elif security == "tls":
                 outbound["tls"] = {
@@ -302,7 +312,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
             hy_data = parse_hysteria2_link(proxy_link)
             if not hy_data:
                 return None
-            
+
             hy_outbound = {
                 "tag": "proxy",
                 "type": "hysteria2",
@@ -310,7 +320,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                 "server_port": hy_data["port"],
                 "password": hy_data["password"],
             }
-            
+
             if hy_data.get("insecure") == "1":
                 hy_outbound["tls"] = {"enabled": True, "insecure": True}
             if hy_data.get("sni"):
@@ -322,7 +332,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                     hy_outbound["tls"] = {"enabled": True}
                 hy_outbound["tls"] = hy_outbound.get("tls", {})
                 hy_outbound["tls"]["utls"] = {"enabled": True, "fingerprint": hy_data["fp"]}
-            
+
             config["outbounds"].append(hy_outbound)
 
         else:
@@ -340,7 +350,10 @@ async def _check_singbox_async(
 ) -> Tuple[str, str, bool, float]:
     import socket
     import aiohttp
-    
+
+    if not SINGBOX_INSTALLED:
+        return proxy_link, proxy_type, False, 0.0
+
     config = generate_singbox_config(proxy_link, proxy_type)
     if not config:
         return proxy_link, proxy_type, False, 0.0
@@ -358,7 +371,7 @@ async def _check_singbox_async(
         proc = await asyncio.create_subprocess_exec(
             SINGBOX_PATH, "run", "-c", config_path,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
 
         for _ in range(timeout * 2):
@@ -370,25 +383,26 @@ async def _check_singbox_async(
                 )
                 writer.close()
                 await writer.wait_closed()
-                
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            TEST_URL,
-                            proxy=f"http://127.0.0.1:{port}",
-                            timeout=aiohttp.ClientTimeout(total=3),
-                            ssl=False
-                        ) as resp:
-                            if resp.status in [200, 204, 201, 301, 302]:
-                                speed = round((time.time() - start) * 1000, 1)
-                                proc.terminate()
-                                try:
-                                    await asyncio.wait_for(proc.wait(), timeout=2)
-                                except:
-                                    proc.kill()
-                                return proxy_link, proxy_type, True, speed
-                except:
-                    pass
+
+                for test_url in TEST_URLS:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                test_url,
+                                proxy=f"http://127.0.0.1:{port}",
+                                timeout=aiohttp.ClientTimeout(total=8),
+                                ssl=False
+                            ) as resp:
+                                if resp.status in [200, 204, 201, 301, 302]:
+                                    speed = round((time.time() - start) * 1000, 1)
+                                    proc.terminate()
+                                    try:
+                                        await asyncio.wait_for(proc.wait(), timeout=2)
+                                    except:
+                                        proc.kill()
+                                    return proxy_link, proxy_type, True, speed
+                    except:
+                        continue
             except:
                 pass
 
@@ -483,7 +497,7 @@ async def check_all_parallel(
         failed_count = 0
         start_time = time.time()
 
-        max_concurrent = min(batch_size, 16)
+        max_concurrent = min(batch_size, 8)
         semaphore = asyncio.Semaphore(max_concurrent)
         lock = asyncio.Lock()
 
@@ -499,6 +513,28 @@ async def check_all_parallel(
             nonlocal working_count, failed_count
             async with semaphore:
                 link, ptype = proxy_tuple
+                
+                if ptype.upper() == "VLESS":
+                    vl_data = parse_vless_link(link)
+                    if vl_data:
+                        ok, speed = await check_vless(vl_data, timeout=6)
+                        if ok:
+                            async with lock:
+                                working_count += 1
+                                results.append((link, speed))
+                                checked = working_count + failed_count
+                                elapsed = time.time() - start_time
+                                if checked > 0:
+                                    eta_sec = int((elapsed / checked) * (len(proxies_list) - checked))
+                                else:
+                                    eta_sec = 0
+                                progress.update(
+                                    task,
+                                    advance=1,
+                                    status=f"[cyan]{checked}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
+                                )
+                            return
+                
                 ok, speed = await check_with_singbox(link, ptype, timeout=8)
 
                 async with lock:
@@ -532,7 +568,7 @@ async def check_all_parallel(
             )
 
             tasks = [asyncio.create_task(check_one(p)) for p in proxy_tuples]
-            
+
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except asyncio.CancelledError:
@@ -599,7 +635,7 @@ def parse_hysteria2_link(link: str) -> dict | None:
             return None
 
         result = {"server": "", "port": 0, "password": password}
-        
+
         if "?" in host_port:
             host_port, params_str = host_port.split("?", 1)
             params_str = params_str.replace(";", "&")
@@ -824,9 +860,8 @@ def parse_vless_link(link: str) -> dict | None:
 
             result = {"server": host, "port": port, "id": id_}
 
-            from urllib.parse import parse_qs
-
             if params:
+                params = unquote(params)
                 qs = parse_qs(params)
                 result["security"] = qs.get("security", ["none"])[0]
                 result["sni"] = qs.get("sni", [""])[0]
@@ -1059,8 +1094,9 @@ async def check_vless(vl_data: dict, timeout: int) -> Tuple[bool, float]:
         server = vl_data["server"]
         port = vl_data["port"]
         security = vl_data.get("security", "none")
+        net_type = vl_data.get("type", "tcp")
 
-        if security in ["tls", "reality"]:
+        if security in ["tls", "reality"] or net_type == "tcp":
             import ssl
 
             ctx = ssl.create_default_context()
@@ -1156,6 +1192,12 @@ async def check_proxy(
             return False, 0.0
 
         if proxy_type.upper() == "VLESS":
+            vl_data = parse_vless_link(proxy)
+            if vl_data:
+                ok, speed = await check_vless(vl_data, timeout=timeout)
+                if ok:
+                    return True, speed
+            
             ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
             if ok:
                 return True, speed
@@ -1238,11 +1280,11 @@ async def check_proxies_async(
                         raise
                     except Exception:
                         ok, speed = False, 0.0
-                    
+
                     checked += 1
                     if not ok:
                         failed += 1
-                    
+
                     working = checked - failed
                     try:
                         progress.update(
@@ -1264,11 +1306,11 @@ async def check_proxies_async(
                     if ok and speed > 0:
                         async with lock:
                             working_list.append((p, speed))
-                    
+
                     return p, ok, speed
 
             tasks = [asyncio.create_task(bounded_check(p)) for p in proxies_list]
-            
+
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except asyncio.CancelledError:
@@ -1432,6 +1474,11 @@ async def main():
         console.print(f"[cyan][*] Loading {proxy_type} proxies...[/cyan]")
         proxies = await load_proxies_from_sources(proxy_type)
 
+        if proxy_type in ["VLESS", "VMESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"] and not SINGBOX_INSTALLED:
+            console.print(f"[red][!] WARNING: sing-box not found at {SINGBOX_PATH}[/red]")
+            console.print(f"[red][!] Using fallback socket check (less accurate)[/red]")
+            time.sleep(2)
+
         if not proxies:
             console.print(f"[red][!] No proxies loaded from sources![/red]")
             time.sleep(2)
@@ -1445,10 +1492,10 @@ async def main():
             f"[cyan][*] Using {DEFAULT_WORKERS} workers for parallel checking[/cyan]"
         )
         console.print(f"[yellow][*] Press Ctrl+C to stop and see results[/yellow]")
-        
+
         working = []
         stopped = False
-        
+
         try:
             working = await check_all_parallel(proxies, proxy_type)
         except (KeyboardInterrupt, asyncio.CancelledError):
@@ -1461,7 +1508,7 @@ async def main():
             console.print(f"\n[green][+] Found {len(working)} working proxies[/green]")
         elif stopped:
             console.print(f"\n[cyan]Found {len(working)} working proxies before stop[/cyan]")
-        
+
         if not working:
             console.print(f"[yellow][*] No working proxies found[/yellow]")
             time.sleep(2)
