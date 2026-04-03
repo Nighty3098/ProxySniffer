@@ -524,34 +524,25 @@ async def check_all_parallel(
                     vl_data = parse_vless_link(link)
                     if vl_data:
                         ok, speed = await check_vless(vl_data, timeout=6)
-                        if ok:
-                            async with lock:
-                                working_count += 1
-                                results.append((link, speed))
-                                checked = working_count + failed_count
-                                elapsed = time.time() - start_time
-                                if checked > 0:
-                                    eta_sec = int(
-                                        (elapsed / checked)
-                                        * (len(proxies_list) - checked)
-                                    )
-                                else:
-                                    eta_sec = 0
-                                progress.update(
-                                    task,
-                                    advance=1,
-                                    status=f"[cyan]{checked}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
-                                )
-                            return
-
-                ok, speed = await check_with_singbox(link, ptype, timeout=8)
+                    else:
+                        ok, speed = False, 0.0
+                else:
+                    ok, speed = await check_with_singbox(link, ptype, timeout=8)
 
                 async with lock:
                     if ok and speed > 0:
                         working_count += 1
                         results.append((link, speed))
+
+                        console.print(
+                            f"[green]✓[/green] [cyan]{link[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
+                        )
+
                     else:
                         failed_count += 1
+                        console.print(
+                            f"[red]x[/red] [cyan]{link[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
+                        )
 
                     checked = working_count + failed_count
                     elapsed = time.time() - start_time
@@ -584,9 +575,15 @@ async def check_all_parallel(
                 for t in tasks:
                     if not t.done():
                         t.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                except:
+                    pass
 
-        results.sort(key=lambda x: x[1])
+        try:
+            results.sort(key=lambda x: x[1])
+        except:
+            pass
         return results
 
     return await check_proxies_async(proxies_list, proxy_type, show_progress=True)
@@ -1510,6 +1507,8 @@ async def main():
         working = []
         stopped = False
 
+        working = []
+        stopped = False
         try:
             working = await check_all_parallel(proxies, proxy_type)
         except (KeyboardInterrupt, asyncio.CancelledError):
