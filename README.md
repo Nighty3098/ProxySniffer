@@ -1,12 +1,10 @@
-
-# ProxySniffer
-
 <img src="imgs/i_3.png" width="20%" align="right" />
 
 <div width="70%" align="left">
 
 <br />
-<br />
+
+<h3>ProxySniffer</h3>
 
 Testing and sorting proxies by speed. Supports HTTP, HTTPS, SOCKS4, SOCKS5, VLESS, VMESS, Trojan, Hysteria2, ShadowSocks, MTProto.
 
@@ -15,6 +13,10 @@ Testing and sorting proxies by speed. Supports HTTP, HTTPS, SOCKS4, SOCKS5, VLES
 <br />
 <br />
 <br />
+<br />
+<br />
+<br />
+
 
 ![alt text](imgs/1.png)
 
