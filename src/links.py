@@ -292,6 +292,9 @@ proxy_VMESS = [
 ]
 
 proxy_VLESS = [
+    "https://etoneya.best/whitelist",
+    "https://raw.githubusercontent.com/TseYaProject/TseYaProject.github.io/refs/heads/main/whitelist",
+    "https://raw.githubusercontent.com/EtoNeYaProject/etoneyaproject.github.io/refs/heads/main/whitelist",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt",
     "https://raw.githubusercontent.com/zieng2/wl/main/vless_lite.txt",
     "https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/refs/heads/main/githubmirror/1.txt",
