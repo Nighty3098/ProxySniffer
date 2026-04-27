@@ -78,6 +78,9 @@ proxy_HYSTERIA2 = [
 ]
 
 proxy_SHADOW_SOCKS = [
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS%2BAll_RUS.txt",
     "https://raw.githubusercontent.com/Argh94/Proxy-List/main/ShadowSocks.txt",
     "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt",
@@ -292,6 +295,9 @@ proxy_VMESS = [
 ]
 
 proxy_VLESS = [
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
     "https://etoneya.best/whitelist",
     "https://raw.githubusercontent.com/TseYaProject/TseYaProject.github.io/refs/heads/main/whitelist",
     "https://raw.githubusercontent.com/EtoNeYaProject/etoneyaproject.github.io/refs/heads/main/whitelist",
