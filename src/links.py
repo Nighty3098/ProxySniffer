@@ -78,6 +78,9 @@ proxy_HYSTERIA2 = [
 ]
 
 proxy_SHADOW_SOCKS = [
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
     "https://raw.githubusercontent.com/redmi9cnfc/TV/main/NoriVPN.txt",
     "https://sub.tlsov.pro/1ml5o3apvAQseBWe",
     "https://gitverse.ru/api/repos/bywarm/rser/raw/branch/master/selected.txt",
@@ -290,6 +293,9 @@ proxy_TROJAN = [
 ]
 
 proxy_VMESS = [
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
     "https://raw.githubusercontent.com/redmi9cnfc/TV/main/NoriVPN.txt",
     "https://sub.tlsov.pro/1ml5o3apvAQseBWe",
     "https://gitverse.ru/api/repos/bywarm/rser/raw/branch/master/selected.txt",
@@ -320,6 +326,9 @@ proxy_VMESS = [
 ]
 
 proxy_VLESS = [
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
+    "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
     "https://raw.githubusercontent.com/redmi9cnfc/TV/main/NoriVPN.txt",
     "https://sub.tlsov.pro/1ml5o3apvAQseBWe",
     "https://gitverse.ru/api/repos/bywarm/rser/raw/branch/master/selected.txt",
