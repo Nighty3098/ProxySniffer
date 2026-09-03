@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import time
+import tkinter as tk
 from datetime import datetime
 from typing import List, Tuple
 
@@ -322,7 +323,12 @@ class ContentFrame(ctk.CTkFrame):
 
         bg = (GRUV_BG_3, GRUV_BG_3) if index % 2 == 0 else "transparent"
 
-        ctk.CTkLabel(
+        def make_context_menu(event):
+            self._show_row_menu(event, proxy)
+
+        widgets = []
+
+        index_label = ctk.CTkLabel(
             row_frame,
             text=f"{index:02d}",
             font=ctk.CTkFont(size=11),
@@ -331,10 +337,12 @@ class ContentFrame(ctk.CTkFrame):
             fg_color=bg,
             corner_radius=3,
             text_color=DIM,
-        ).grid(row=0, column=0, padx=(4, 4), sticky="w", pady=1)
+        )
+        index_label.grid(row=0, column=0, padx=(4, 4), sticky="w", pady=1)
+        widgets.append(index_label)
 
         display = proxy if len(proxy) <= 75 else proxy[:72] + "..."
-        ctk.CTkLabel(
+        proxy_label = ctk.CTkLabel(
             row_frame,
             text=display,
             font=ctk.CTkFont(family="Consolas", size=11),
@@ -342,9 +350,11 @@ class ContentFrame(ctk.CTkFrame):
             fg_color=bg,
             corner_radius=3,
             text_color=GRUV_FG,
-        ).grid(row=0, column=1, padx=(4, 4), sticky="ew", pady=1)
+        )
+        proxy_label.grid(row=0, column=1, padx=(4, 4), sticky="ew", pady=1)
+        widgets.append(proxy_label)
 
-        ctk.CTkLabel(
+        speed_label = ctk.CTkLabel(
             row_frame,
             text=f"{speed}ms",
             font=ctk.CTkFont(size=11, weight="bold"),
@@ -353,7 +363,28 @@ class ContentFrame(ctk.CTkFrame):
             anchor="e",
             fg_color=bg,
             corner_radius=3,
-        ).grid(row=0, column=2, padx=(4, 4), sticky="e", pady=1)
+        )
+        speed_label.grid(row=0, column=2, padx=(4, 4), sticky="e", pady=1)
+        widgets.append(speed_label)
+
+        for widget in [row_frame] + widgets:
+            widget.bind("<Button-3>", make_context_menu)
+
+    def _show_row_menu(self, event, proxy):
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="Copy proxy",
+            command=lambda: self._copy_to_clipboard(proxy),
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _copy_to_clipboard(self, text):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.update_idletasks()
 
     def update_stats(self, checked, total, working, failed):
         self.stats_label.configure(
