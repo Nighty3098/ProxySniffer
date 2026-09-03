@@ -12,6 +12,7 @@ TEST_URLS = [
     "https://www.apple.com/library/test/success.html",
 ]
 SINGBOX_POOL_SIZE = max(4, CPU_CORES)
+TCP_PRECHECK_TIMEOUT = 2
 
 proxy_mapping = {
     1: "HTTP",

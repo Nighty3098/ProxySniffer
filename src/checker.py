@@ -7,7 +7,13 @@ from typing import Dict, List, Tuple
 
 import aiohttp
 
-from config import SINGBOX_INSTALLED, SINGBOX_PATH, SINGBOX_POOL_SIZE, TEST_URLS
+from config import (
+    SINGBOX_INSTALLED,
+    SINGBOX_PATH,
+    SINGBOX_POOL_SIZE,
+    TCP_PRECHECK_TIMEOUT,
+    TEST_URLS,
+)
 from parsers import (
     parse_hysteria2_link,
     parse_shadowsocks_link,
@@ -16,6 +22,22 @@ from parsers import (
     parse_vmess_link,
 )
 from utils import get_free_port
+
+
+async def tcp_precheck(
+    server: str, port: int, timeout: float = TCP_PRECHECK_TIMEOUT
+) -> Tuple[bool, float]:
+    try:
+        start = time.time()
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(server, port), timeout=timeout
+        )
+        latency = round((time.time() - start) * 1000, 1)
+        writer.close()
+        await writer.wait_closed()
+        return True, latency
+    except Exception:
+        return False, 0.0
 
 
 def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
@@ -273,13 +295,60 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
         return None
 
 
+def generate_singbox_config_trimmed(proxy_link: str, proxy_type: str) -> dict | None:
+    config = generate_singbox_config(proxy_link, proxy_type)
+    if not config:
+        return None
+
+    config["log"] = {"level": "none"}
+    config["dns"] = {"servers": [{"address": "8.8.8.8"}]}
+    config["inbounds"] = [{"tag": "mixed-in", "type": "mixed", "listen_port": 1080}]
+
+    for outbound in config.get("outbounds", []):
+        outbound.pop("mux", None)
+
+    return config
+
+
 async def _check_singbox_async(
     proxy_link: str, proxy_type: str, port: int, timeout: int
 ) -> Tuple[str, str, bool, float]:
     if not SINGBOX_INSTALLED:
         return proxy_link, proxy_type, False, 0.0
 
-    config = generate_singbox_config(proxy_link, proxy_type)
+    server_host = None
+    server_port = None
+    ptype = proxy_type.upper()
+
+    if ptype == "VLESS":
+        data = parse_vless_link(proxy_link)
+        if data:
+            server_host, server_port = data.get("server"), data.get("port")
+    elif ptype == "VMESS":
+        data = parse_vmess_link(proxy_link)
+        if data:
+            server_host, server_port = data.get("server"), data.get("port")
+    elif ptype == "TROJAN":
+        data = parse_trojan_link(proxy_link)
+        if data:
+            server_host, server_port = data.get("server"), data.get("port")
+    elif ptype == "HYSTERIA2":
+        data = parse_hysteria2_link(proxy_link)
+        if data:
+            server_host, server_port = data.get("server"), data.get("port")
+    elif ptype == "SHADOW_SOCKS":
+        data = parse_shadowsocks_link(proxy_link)
+        if data:
+            server_host, server_port = data.get("server"), data.get("port")
+
+    if server_host and server_port:
+        pre_ok, _ = await tcp_precheck(server_host, int(server_port))
+        if not pre_ok:
+            return proxy_link, proxy_type, False, 0.0
+
+    config = generate_singbox_config_trimmed(proxy_link, proxy_type)
+    if not config:
+        config = generate_singbox_config(proxy_link, proxy_type)
     if not config:
         return proxy_link, proxy_type, False, 0.0
 
