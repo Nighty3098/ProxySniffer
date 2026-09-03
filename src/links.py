@@ -74,6 +74,7 @@ proxy_MTPROTO = [
 ]
 
 proxy_HYSTERIA2 = [
+    "https://gitverse.ru/api/repos/ru-wbl/wl/raw/branch/master/KvRuVPN/KvRuVPN.txt",
     "https://raw.githubusercontent.com/Argh94/Proxy-List/main/Hysteria2.txt",
 ]
 
@@ -263,6 +264,10 @@ proxy_SHADOW_SOCKS = [
 ]
 
 proxy_TROJAN = [
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN-white-list-lite/refs/heads/main/AetrisVPN.txt",
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
+    "https://gitverse.ru/api/repos/Akres/VPN/raw/branch/master/all",
+    "https://gitverse.ru/api/repos/ru-wbl/wl/raw/branch/master/KvRuVPN/KvRuVPN.txt",
     "https://raw.githubusercontent.com/Argh94/Proxy-List/main/Trojan.txt",
     "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/githubmirror/1.txt",
     "https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/githubmirror/2.txt",
@@ -293,6 +298,9 @@ proxy_TROJAN = [
 ]
 
 proxy_VMESS = [
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
+    "https://gitverse.ru/api/repos/Akres/VPN/raw/branch/master/all",
+    "https://gitverse.ru/api/repos/ru-wbl/wl/raw/branch/master/KvRuVPN/KvRuVPN.txt",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
@@ -326,6 +334,14 @@ proxy_VMESS = [
 ]
 
 proxy_VLESS = [
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN-white-list-lite/refs/heads/main/AetrisVPN.txt",
+    "https://gitverse.ru/api/repos/flaafix/AetrisVPN/raw/branch/master/AetrisVPN.txt",
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",
+    "https://raw.githubusercontent.com/flaafix/AetrisVPN/refs/heads/main/AetrisVPN.txt",
+    "https://gitverse.ru/api/repos/Akres/VPN/raw/branch/master/all",
+    "https://gitverse.ru/api/repos/ru-wbl/wl/raw/branch/master/KvRuVPN/KvRuVPN.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-SNI-RU-all.txt",
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/WHITE-CIDR-RU-checked.txt",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_part8.txt",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/My_Euro/my_euro_all_WHITE.txt",
     "https://raw.githubusercontent.com/kort0881/vpn-checker-backend/main/checked/RU_Best/ru_white_all_WHITE.txt",
