@@ -118,13 +118,40 @@ For HTTP/SOCKS proxies, it is recommended to test 1000-3000 proxies at a time.
 
 For VLESS/VMESS/Trojan, do not exceed 500, as testing requires launching a separate sing-box process for each proxy.
 
+## GUI Mode
+
+ProxySniffer also has a graphical interface using CustomTkinter.
+
+### Run GUI
+
+```bash
+cd src
+python3 main_gui.py
+```
+
+### GUI Features
+
+- Modern dark/light theme (follows system settings)
+- All 10 protocols supported
+- Real-time progress bar with ETA
+- Scrolling log with live proxy check results
+- Results table sorted by speed
+- One-click save to file
+
 ## Project Structure
 
 ```
 ProxySniffer/
 ├── src/
-│   ├── main.py          # Main program file
-│   └── links.py         # Proxy sources
+│   ├── main.py          # CLI entry point
+│   ├── main_gui.py      # GUI entry point
+│   ├── config.py        # Configuration
+│   ├── core.py          # Core checking logic
+│   ├── checker.py       # Protocol checkers
+│   ├── fetcher.py       # Proxy downloader
+│   ├── parsers.py       # Link parsers
+│   ├── links.py         # Proxy sources
+│   └── utils.py         # Utilities
 ├── requirements.txt     # Python dependencies
 └── README.md           # This file
 ```

@@ -6,6 +6,7 @@ attrs==26.1.0
 certifi==2025.7.14
 charset-normalizer==3.4.2
 colorama==0.4.6
+customtkinter==6.0.0
 frozenlist==1.8.0
 idna==3.10
 iniconfig==2.3.0

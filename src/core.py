@@ -30,13 +30,16 @@ from parsers import (
 console = Console()
 
 
-async def load_proxies_from_sources(proxy_sources: dict, proxy_type: str) -> List[str]:
+async def load_proxies_from_sources(
+    proxy_sources: dict, proxy_type: str, quiet: bool = False
+) -> List[str]:
     sources = proxy_sources.get(proxy_type.upper(), [])
     all_proxies: set = set()
 
-    console.print(
-        f"[cyan][*] Downloading {proxy_type} proxies from {len(sources)} sources...[/cyan]"
-    )
+    if not quiet:
+        console.print(
+            f"[cyan][*] Downloading {proxy_type} proxies from {len(sources)} sources...[/cyan]"
+        )
 
     tasks = [fetch_proxies(url) for url in sources]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -46,9 +49,10 @@ async def load_proxies_from_sources(proxy_sources: dict, proxy_type: str) -> Lis
             all_proxies.update(result)
 
     unique_proxies = list(all_proxies)
-    console.print(
-        f"[green][+] Loaded {len(unique_proxies)} unique {proxy_type} proxies[/green]"
-    )
+    if not quiet:
+        console.print(
+            f"[green][+] Loaded {len(unique_proxies)} unique {proxy_type} proxies[/green]"
+        )
     return unique_proxies
 
 

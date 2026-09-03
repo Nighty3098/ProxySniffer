@@ -25,3 +25,46 @@ proxy_mapping = {
     9: "VMESS",
     10: "VLESS",
 }
+
+PROTOCOLS = list(proxy_mapping.values())
+
+DEFAULT_LIMITS = {
+    "HTTP": 2000,
+    "HTTPS": 2000,
+    "SOCKS4": 2000,
+    "SOCKS5": 2000,
+    "MTPROTO": 500,
+    "HYSTERIA2": 500,
+    "SHADOW_SOCKS": 500,
+    "TROJAN": 500,
+    "VMESS": 500,
+    "VLESS": 500,
+}
+
+
+def get_proxy_sources():
+    from links import (
+        proxy_HTTP,
+        proxy_HTTPS,
+        proxy_HYSTERIA2,
+        proxy_MTPROTO,
+        proxy_SHADOW_SOCKS,
+        proxy_SOCKS4,
+        proxy_SOCKS5,
+        proxy_TROJAN,
+        proxy_VLESS,
+        proxy_VMESS,
+    )
+
+    return {
+        "HTTP": proxy_HTTP,
+        "HTTPS": proxy_HTTPS,
+        "SOCKS4": proxy_SOCKS4,
+        "SOCKS5": proxy_SOCKS5,
+        "MTPROTO": proxy_MTPROTO,
+        "HYSTERIA2": proxy_HYSTERIA2,
+        "SHADOW_SOCKS": proxy_SHADOW_SOCKS,
+        "TROJAN": proxy_TROJAN,
+        "VMESS": proxy_VMESS,
+        "VLESS": proxy_VLESS,
+    }

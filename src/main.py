@@ -13,34 +13,12 @@ from config import (
     DEFAULT_WORKERS,
     SINGBOX_INSTALLED,
     SINGBOX_PATH,
+    get_proxy_sources,
     proxy_mapping,
 )
 from core import check_all_parallel, load_proxies_from_sources
-from links import (
-    proxy_HTTP,
-    proxy_HTTPS,
-    proxy_HYSTERIA2,
-    proxy_MTPROTO,
-    proxy_SHADOW_SOCKS,
-    proxy_SOCKS4,
-    proxy_SOCKS5,
-    proxy_TROJAN,
-    proxy_VLESS,
-    proxy_VMESS,
-)
 
-proxy_sources = {
-    "HTTP": proxy_HTTP,
-    "HTTPS": proxy_HTTPS,
-    "SOCKS4": proxy_SOCKS4,
-    "SOCKS5": proxy_SOCKS5,
-    "MTPROTO": proxy_MTPROTO,
-    "HYSTERIA2": proxy_HYSTERIA2,
-    "SHADOW_SOCKS": proxy_SHADOW_SOCKS,
-    "TROJAN": proxy_TROJAN,
-    "VMESS": proxy_VMESS,
-    "VLESS": proxy_VLESS,
-}
+proxy_sources = get_proxy_sources()
 
 init(autoreset=True)
 
