@@ -315,12 +315,12 @@ class ContentFrame(ctk.CTkFrame):
     def add_result_row(self, index, proxy, speed):
         row_frame = ctk.CTkFrame(
             self.table_rows_frame,
-            fg_color=("transparent", "transparent"),
+            fg_color="transparent",
         )
         row_frame.grid(row=index, column=0, columnspan=3, sticky="ew", pady=1)
         row_frame.grid_columnconfigure(1, weight=1)
 
-        bg = (GRUV_BG_3, GRUV_BG_3) if index % 2 == 0 else ("transparent", "transparent")
+        bg = (GRUV_BG_3, GRUV_BG_3) if index % 2 == 0 else "transparent"
 
         ctk.CTkLabel(
             row_frame,
