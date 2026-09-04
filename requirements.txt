@@ -27,3 +27,4 @@ urllib3==2.5.0
 uvloop==0.22.1
 V2Ray==1.1
 yarl==1.23.0
+Telethon==1.38.1

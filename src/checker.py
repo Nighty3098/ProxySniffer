@@ -521,6 +521,55 @@ async def check_mtproto_http(
         return False, 0
 
 
+async def check_mtproto_telethon(
+    server: str, port: int, secret: str, timeout: int
+) -> Tuple[bool, float]:
+    try:
+        from telethon import TelegramClient
+        from telethon.errors import (
+            AuthKeyError,
+            FloodWaitError,
+            RPCError,
+        )
+
+        proxy = (server, port, secret)
+
+        client = TelegramClient(
+            "anon",
+            api_id=12345,
+            api_hash="a1b2c3d4e5f6g7h8i9j0",
+            proxy=proxy,
+            connection_retries=1,
+            timeout=timeout,
+        )
+
+        try:
+            await client.connect()
+
+            if await client.is_ready():
+                await client.disconnect()
+                return True, 1
+
+            await client.disconnect()
+            return False, 0
+        except (AuthKeyError, RPCError, FloodWaitError):
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return False, 0
+        except Exception:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return False, 0
+    except ImportError:
+        return False, 0
+    except Exception:
+        return False, 0
+
+
 async def check_mtproto_all_methods(
     server: str, port: int, secret: str, timeout: int
 ) -> Tuple[bool, float]:
@@ -531,6 +580,8 @@ async def check_mtproto_all_methods(
         ok, _ = await check_mtproto_handshake(server, port, secret, timeout)
     if not ok:
         ok, _ = await check_mtproto_http(server, port, secret, timeout)
+    if not ok:
+        ok, _ = await check_mtproto_telethon(server, port, secret, timeout)
 
     if ok:
         speed = round((time.time() - start) * 1000, 1)
