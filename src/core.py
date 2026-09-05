@@ -18,7 +18,7 @@ from checker import (
     check_with_singbox,
     generate_singbox_config,
 )
-from config import DEFAULT_WORKERS
+from config import DEFAULT_WORKERS, TEST_URLS
 from fetcher import fetch_proxies
 from parsers import (
     parse_mtproto_link,
@@ -60,7 +60,7 @@ async def check_proxy(
     session,
     proxy: str,
     proxy_type: str,
-    test_url: str = "https://httpbin.org/ip",
+    test_url: str = None,
     timeout: int = 10,
 ) -> Tuple[bool, float]:
     try:
@@ -135,13 +135,25 @@ async def check_proxy(
         else:
             return False, 0.0
 
-        async with session.get(
-            test_url, proxy=proxy_url, timeout=timeout, ssl=False
-        ) as response:
-            if response.status == 200:
-                speed = round((time.time() - start) * 1000, 1)
-                return True, speed
-    except:
+        for target in TEST_URLS:
+            try:
+                async with session.get(
+                    target,
+                    proxy=proxy_url,
+                    timeout=timeout,
+                    ssl=False,
+                    allow_redirects=False,
+                ) as response:
+                    if 200 <= response.status < 400:
+                        speed = round((time.time() - start) * 1000, 1)
+                        return True, speed
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                continue
+    except asyncio.CancelledError:
+        raise
+    except Exception:
         pass
     return False, 0.0
 
@@ -161,7 +173,7 @@ async def check_proxies_async(
         enable_cleanup_closed=True,
     )
 
-    test_url = "https://httpbin.org/ip"
+    test_url = None
     working_list = []
     failed = 0
     checked = 0
@@ -184,8 +196,8 @@ async def check_proxies_async(
 
         async with aiohttp.ClientSession(
             connector=connector,
-            timeout=aiohttp.ClientTimeout(total=8, connect=2),
-            read_bufsize=65536,
+            timeout=aiohttp.ClientTimeout(total=6, connect=1.5),
+            read_bufsize=8192,
         ) as session:
             semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -194,7 +206,7 @@ async def check_proxies_async(
                 async with semaphore:
                     try:
                         ok, speed = await check_proxy(
-                            session, p, proxy_type, test_url=test_url, timeout=4
+                            session, p, proxy_type, test_url=test_url, timeout=3
                         )
                     except asyncio.CancelledError:
                         raise
@@ -305,7 +317,7 @@ async def check_all_parallel(
         failed_count = 0
         start_time = time.time()
 
-        max_concurrent = min(batch_size, 8)
+        max_concurrent = min(batch_size, max(8, SINGBOX_POOL_SIZE))
         semaphore = asyncio.Semaphore(max_concurrent)
         lock = asyncio.Lock()
 

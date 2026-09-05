@@ -7,12 +7,13 @@ DEFAULT_WORKERS = max(8, CPU_CORES * 2)
 SINGBOX_PATH = "/tmp/sing-box-1.13.4-linux-amd64/sing-box"
 SINGBOX_INSTALLED = os.path.exists(SINGBOX_PATH)
 TEST_URLS = [
+    "http://www.gstatic.com/generate_204",
     "https://www.gstatic.com/generate_204",
     "https://cp.cloudflare.com/generate_204",
     "https://www.apple.com/library/test/success.html",
 ]
 SINGBOX_POOL_SIZE = max(4, CPU_CORES)
-TCP_PRECHECK_TIMEOUT = 2
+TCP_PRECHECK_TIMEOUT = 1.5
 
 proxy_mapping = {
     1: "HTTP",

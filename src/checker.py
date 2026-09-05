@@ -371,8 +371,8 @@ async def _check_singbox_async(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        for _ in range(timeout * 2):
-            await asyncio.sleep(0.5)
+        for _ in range(timeout * 5):
+            await asyncio.sleep(0.2)
             try:
                 reader, writer = await asyncio.wait_for(
                     asyncio.open_connection("127.0.0.1", port), timeout=1
@@ -380,26 +380,32 @@ async def _check_singbox_async(
                 writer.close()
                 await writer.wait_closed()
 
-                for test_url in TEST_URLS:
-                    try:
-                        async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=8, connect=4),
+                    read_bufsize=8192,
+                ) as session:
+                    for test_url in TEST_URLS:
+                        try:
                             async with session.get(
                                 test_url,
                                 proxy=f"http://127.0.0.1:{port}",
                                 timeout=aiohttp.ClientTimeout(total=8),
                                 ssl=False,
+                                allow_redirects=False,
                             ) as resp:
-                                if resp.status in [200, 204, 201, 301, 302]:
+                                if 200 <= resp.status < 400:
                                     speed = round((time.time() - start) * 1000, 1)
-                                    proc.terminate()
-                                    try:
-                                        await asyncio.wait_for(proc.wait(), timeout=2)
-                                    except:
-                                        proc.kill()
-                                    return proxy_link, proxy_type, True, speed
-                    except:
-                        continue
-            except:
+                                else:
+                                    continue
+                        except Exception:
+                            continue
+                        proc.terminate()
+                        try:
+                            await asyncio.wait_for(proc.wait(), timeout=2)
+                        except Exception:
+                            proc.kill()
+                        return proxy_link, proxy_type, True, speed
+            except Exception:
                 pass
 
         proc.terminate()
@@ -575,13 +581,22 @@ async def check_mtproto_all_methods(
 ) -> Tuple[bool, float]:
     start = time.time()
 
-    ok, _ = await check_mtproto_tcp(server, port, timeout)
+    methods = [
+        asyncio.create_task(check_mtproto_tcp(server, port, timeout)),
+        asyncio.create_task(check_mtproto_handshake(server, port, secret, timeout)),
+        asyncio.create_task(check_mtproto_http(server, port, secret, timeout)),
+    ]
+    done, pending = await asyncio.wait(methods, return_when=asyncio.FIRST_COMPLETED)
+
+    ok = any(res.result()[0] for res in done)
+    for task in pending:
+        task.cancel()
+
     if not ok:
-        ok, _ = await check_mtproto_handshake(server, port, secret, timeout)
-    if not ok:
-        ok, _ = await check_mtproto_http(server, port, secret, timeout)
-    if not ok:
-        ok, _ = await check_mtproto_telethon(server, port, secret, timeout)
+        for task in asyncio.as_completed(
+            [asyncio.create_task(check_mtproto_telethon(server, port, secret, timeout))]
+        ):
+            ok = (await task)[0]
 
     if ok:
         speed = round((time.time() - start) * 1000, 1)

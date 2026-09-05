@@ -528,8 +528,10 @@ class ProxySnifferApp(ctk.CTk):
         checked = 0
         start_time = time.time()
 
-        sem = asyncio.Semaphore(min(8 if is_singbox else DEFAULT_WORKERS * 2, 32))
-        test_url = "https://httpbin.org/ip"
+        sem = asyncio.Semaphore(
+            min(8 if is_singbox else DEFAULT_WORKERS * 4, 64)
+        )
+        test_url = None
 
         async with aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(

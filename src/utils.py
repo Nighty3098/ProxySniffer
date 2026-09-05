@@ -1,15 +1,20 @@
-import random
 import socket
-from typing import List, Tuple
+from itertools import count
+from typing import Tuple
+
+_port_counter = count(1)
 
 
 def get_free_port(start: int = 15000, end: int = 60000) -> int:
-    while True:
-        port = random.randint(start, end)
+    span = end - start
+    for _ in range(span):
+        port = start + (next(_port_counter) % span)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.bind(("127.0.0.1", port))
-            sock.close()
-            return port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(("127.0.0.1", port))
+                sock.settimeout(0.1)
+                return port
         except OSError:
             continue
+    raise RuntimeError("no free ports available")
