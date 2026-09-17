@@ -14,6 +14,10 @@ NC='\033[0m'
 echo -e "${YELLOW}Checking Python version...${NC}"
 python3 --version || { echo -e "${RED}Python 3 not found! Please install Python 3.9+${NC}"; exit 1; }
 
+echo -e "${YELLOW}Setup venv...${NC}"
+python3 -m venv venv
+source venv/bin/activate
+
 echo -e "${YELLOW}Installing Python dependencies...${NC}"
 cd "$(dirname "$0")"
 pip install -r requirements.txt
