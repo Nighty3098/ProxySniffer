@@ -3,6 +3,8 @@ from typing import List
 
 import aiohttp
 
+from utils import PROXY_PREFIXES
+
 
 async def fetch_proxies(url: str) -> List[str]:
     try:
@@ -19,22 +21,7 @@ async def fetch_proxies(url: str) -> List[str]:
                             continue
                         if "t.me/proxy" in line.lower():
                             proxies.append(line)
-                        elif any(
-                            line.lower().startswith(p)
-                            for p in (
-                                "http://",
-                                "https://",
-                                "socks4://",
-                                "socks5://",
-                                "socks4h://",
-                                "socks5h://",
-                                "hysteria2://",
-                                "ss://",
-                                "trojan://",
-                                "vmess://",
-                                "vless://",
-                            )
-                        ):
+                        elif line.lower().startswith(PROXY_PREFIXES):
                             proxies.append(line)
                         elif ":" in line:
                             if line.count(":") == 1:

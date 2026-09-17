@@ -1,3 +1,15 @@
+proxy_TOR_obfs4 = [
+    "https://raw.githubusercontent.com/center2055/OnionHop-Bridges-Collector/main/bridge/obfs4_tested.txt"
+]
+
+proxy_TOR_webtunnel = [
+    "https://raw.githubusercontent.com/center2055/OnionHop-Bridges-Collector/main/bridge/webtunnel_tested.txt"
+]
+
+proxy_TOR_snowflake = [
+    "https://raw.githubusercontent.com/center2055/OnionHop-Bridges-Collector/main/bridge/snowflake_tested.txt"
+]
+
 proxy_HTTP = [
     "https://api.proxyscrape.com/v3/free-proxy-list/get?request=getproxies&protocol=http",
     "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/http/data.txt",

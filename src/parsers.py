@@ -4,6 +4,72 @@ from typing import Dict, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 
+def strip_bridge_prefix(line: str) -> str:
+    stripped = line.strip()
+    if stripped[:7].lower() == "bridge ":
+        return stripped[7:].strip()
+    return stripped
+
+
+def parse_bridge_line(line: str) -> Optional[Dict]:
+    try:
+        line = strip_bridge_prefix(line)
+        parts = line.split()
+        if len(parts) < 3:
+            return None
+
+        protocol = parts[0].lower()
+        if protocol not in ("obfs4", "webtunnel", "snowflake", "snowflake-direct"):
+            return None
+
+        transport = protocol.replace("-direct", "")
+
+        host_port = parts[1]
+        if host_port.startswith("["):
+            end = host_port.find("]")
+            if end == -1 or not host_port[end + 1 :].startswith(":"):
+                return None
+            host = host_port[1:end]
+            port_str = host_port[end + 2 :]
+        elif ":" not in host_port:
+            return None
+        else:
+            host, port_str = host_port.rsplit(":", 1)
+        if not host or not port_str.isdigit():
+            return None
+        port = int(port_str)
+        if not 1 <= port <= 65535:
+            return None
+
+        fingerprint = parts[2].upper()
+        if len(fingerprint) != 40 or any(
+            c not in "0123456789ABCDEF" for c in fingerprint
+        ):
+            return None
+
+        params = {}
+        for part in parts[3:]:
+            if "=" in part:
+                key, value = part.split("=", 1)
+                params[key] = unquote(value)
+
+        if transport == "obfs4" and "cert" not in params:
+            return None
+        if transport == "webtunnel" and "url" not in params:
+            return None
+
+        return {
+            "protocol": transport,
+            "host": host,
+            "port": port,
+            "fingerprint": fingerprint,
+            "params": params,
+        }
+    except Exception:
+        pass
+    return None
+
+
 def parse_proxy(proxy: str) -> str:
     proxy = proxy.strip()
     for prefix in (
@@ -192,7 +258,9 @@ def parse_trojan_link(link: str) -> Optional[Dict]:
                 result["path"] = qs.get("path", qs.get("wspath", [""]))[0]
                 result["host"] = qs.get("host", [""])[0]
                 result["alpn"] = qs.get("alpn", [""])[0]
-                result["insecure"] = qs.get("insecure", qs.get("allowInsecure", ["0"]))[0]
+                result["insecure"] = qs.get("insecure", qs.get("allowInsecure", ["0"]))[
+                    0
+                ]
 
                 if qs.get("grpc", [""])[0]:
                     result["type"] = "grpc"

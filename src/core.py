@@ -13,19 +13,18 @@ from rich.progress import (
 )
 
 from checker import (
+    _check_tor_dependencies,
     check_mtproto_all_methods,
+    check_tor_bridge,
     check_vless,
     check_with_singbox,
     generate_singbox_config,
 )
-from config import DEFAULT_WORKERS, TEST_URLS
+from config import DEFAULT_WORKERS, TEST_URLS, TOR_BOOTSTRAP_TIMEOUT, TOR_MAX_CONCURRENT
+
+TOR_TYPES = ("TOR_OBFS4", "TOR_WEBTUNNEL", "TOR_SNOWFLAKE")
 from fetcher import fetch_proxies
-from parsers import (
-    parse_mtproto_link,
-    parse_proxy,
-    parse_trojan_link,
-    parse_vless_link,
-)
+from parsers import parse_mtproto_link, parse_proxy, parse_trojan_link, parse_vless_link
 
 console = Console()
 
@@ -77,6 +76,18 @@ async def check_proxy(
 
             if ok:
                 speed = round((time.time() - start) * 1000, 1)
+                return True, speed
+            return False, 0.0
+
+        if proxy_type.upper() in ("TOR_OBFS4", "TOR_WEBTUNNEL", "TOR_SNOWFLAKE"):
+            try:
+                ok, speed = await check_tor_bridge(
+                    proxy, proxy_type.upper(), max(timeout, TOR_BOOTSTRAP_TIMEOUT)
+                )
+            except RuntimeError as dep_err:
+                console.print(f"[red][!] {dep_err}[/red]")
+                return False, 0.0
+            if ok:
                 return True, speed
             return False, 0.0
 
@@ -263,9 +274,9 @@ async def check_with_singbox_batch(
     if not proxies:
         return []
 
+    from checker import _check_singbox_async
     from config import SINGBOX_POOL_SIZE
     from utils import get_free_port
-    from checker import _check_singbox_async
 
     max_workers = max_workers or SINGBOX_POOL_SIZE
     semaphore = asyncio.Semaphore(max_workers)
@@ -294,6 +305,103 @@ async def check_with_singbox_batch(
     return valid_results
 
 
+async def check_tor_parallel(
+    proxies_list: List[str],
+    proxy_type: str,
+) -> List[Tuple[str, float]]:
+    """Проверка Tor-мостов с низкой конкурентностью.
+
+    Каждый мост = отдельный процесс tor + bootstrap до 100 (десятки секунд).
+    50-100 параллельных tor уронят машину, поэтому семафор маленький
+    (см. TOR_MAX_CONCURRENT), а таймаут всегда полный bootstrap-таймаут.
+    Зависимости проверяем один раз до старта, а не на каждый мост.
+    """
+    if not proxies_list:
+        return []
+
+    dep_error = _check_tor_dependencies(proxy_type.upper())
+    if dep_error:
+        console.print(f"[red][!] {dep_error}[/red]")
+        return []
+
+    results: List[Tuple[str, float]] = []
+    working_count = 0
+    failed_count = 0
+    start_time = time.time()
+
+    semaphore = asyncio.Semaphore(TOR_MAX_CONCURRENT)
+    lock = asyncio.Lock()
+
+    progress_columns = [
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[cyan]{task.fields[status]}[/cyan]"),
+    ]
+
+    async def check_one(bridge: str):
+        nonlocal working_count, failed_count
+        async with semaphore:
+            try:
+                ok, speed = await check_tor_bridge(
+                    bridge, proxy_type.upper(), TOR_BOOTSTRAP_TIMEOUT
+                )
+            except RuntimeError:
+                ok, speed = False, 0.0
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                ok, speed = False, 0.0
+
+            async with lock:
+                if ok and speed > 0:
+                    working_count += 1
+                    results.append((bridge, speed))
+                    console.print(
+                        f"[green]✓[/green] [cyan]{bridge[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
+                    )
+                else:
+                    failed_count += 1
+                    console.print(f"[red]x[/red] [cyan]{bridge[:60]}...[/cyan]")
+
+                progress.update(
+                    task,
+                    advance=1,
+                    status=f"[cyan]{working_count + failed_count}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
+                )
+
+    with Progress(*progress_columns, console=console) as progress:
+        task = progress.add_task(
+            f"[green]Checking {proxy_type} (tor bootstrap, ≤{TOR_MAX_CONCURRENT} parallel)...",
+            total=len(proxies_list),
+            status=f"[yellow]0/{len(proxies_list)}[/yellow] | [red]✗ 0[/red]",
+        )
+
+        tasks = [asyncio.create_task(check_one(p)) for p in proxies_list]
+
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception:
+                pass
+
+    try:
+        results.sort(key=lambda x: x[1])
+    except Exception:
+        pass
+    elapsed = time.time() - start_time
+    console.print(
+        f"[cyan][*] Tor check done: {len(results)}/{len(proxies_list)} in {elapsed:.0f}s[/cyan]"
+    )
+    return results
+
+
 async def check_all_parallel(
     proxies_list: List[str],
     proxy_type: str,
@@ -301,6 +409,9 @@ async def check_all_parallel(
 ) -> List[Tuple[str, float]]:
     if not proxies_list:
         return []
+
+    if proxy_type.upper() in TOR_TYPES:
+        return await check_tor_parallel(proxies_list, proxy_type)
 
     if proxy_type.upper() in ["HTTP", "HTTPS", "SOCKS4", "SOCKS5"]:
         return await check_proxies_async(proxies_list, proxy_type, show_progress=True)

@@ -1,6 +1,22 @@
 import socket
 from itertools import count
-from typing import Tuple
+
+PROXY_PREFIXES = (
+    "http://",
+    "https://",
+    "socks4://",
+    "socks5://",
+    "socks4h://",
+    "socks5h://",
+    "hysteria2://",
+    "ss://",
+    "trojan://",
+    "vmess://",
+    "vless://",
+    "snowflake",
+    "obfs4",
+    "webtunnel",
+)
 
 _port_counter = count(1)
 

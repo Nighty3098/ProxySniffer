@@ -10,6 +10,7 @@ from rich.table import Table
 
 from config import (
     CPU_CORES,
+    DEFAULT_LIMITS,
     DEFAULT_WORKERS,
     SINGBOX_INSTALLED,
     SINGBOX_PATH,
@@ -57,16 +58,8 @@ def print_banner():
 
 def main_menu():
     console.print("")
-    console.print("[1] HTTP Proxy")
-    console.print("[2] HTTPS Proxy")
-    console.print("[3] SOCKS4 Proxy")
-    console.print("[4] SOCKS5 Proxy")
-    console.print("[5] MTPROTO Proxy")
-    console.print("[6] HYSTERIA2 Proxy")
-    console.print("[7] SHADOW_SOCKS Proxy")
-    console.print("[8] TROJAN Proxy")
-    console.print("[9] VMESS Proxy")
-    console.print("[10] VLESS Proxy")
+    for num, protocol in proxy_mapping.items():
+        console.print(f"[{num}] {protocol.replace('_', ' ')} Proxy")
     console.print("[0] Exit")
 
 
@@ -83,19 +76,14 @@ async def main():
         if choice == 0:
             console.print("\n[red][!] Exiting...[/red]")
             break
-        elif choice not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+        elif choice not in proxy_mapping:
             console.print("\n[red][!] Invalid option![/red]")
             time.sleep(1)
             continue
 
         proxy_type = proxy_mapping[choice]
 
-        default_limit = (
-            500
-            if proxy_type
-            in ["VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS", "MTPROTO"]
-            else 2000
-        )
+        default_limit = DEFAULT_LIMITS.get(proxy_type, 500)
 
         try:
             print_banner()

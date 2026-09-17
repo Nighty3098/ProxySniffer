@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 import time
 from typing import Dict, List, Tuple
@@ -8,18 +9,28 @@ from typing import Dict, List, Tuple
 import aiohttp
 
 from config import (
+    LYREBIRD_INSTALLED,
+    LYREBIRD_PATH,
     SINGBOX_INSTALLED,
     SINGBOX_PATH,
     SINGBOX_POOL_SIZE,
+    SNOWFLAKE_CLIENT_INSTALLED,
+    SNOWFLAKE_CLIENT_PATH,
     TCP_PRECHECK_TIMEOUT,
     TEST_URLS,
+    TOR_BOOTSTRAP_TIMEOUT,
+    TOR_CHECK_PORTS_START,
+    TOR_INSTALLED,
+    TOR_PATH,
 )
 from parsers import (
+    parse_bridge_line,
     parse_hysteria2_link,
     parse_shadowsocks_link,
     parse_trojan_link,
     parse_vless_link,
     parse_vmess_link,
+    strip_bridge_prefix,
 )
 from utils import get_free_port
 
@@ -504,7 +515,9 @@ async def check_mtproto_http(
             asyncio.open_connection(server, port), timeout=timeout
         )
 
-        http_request = b"GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n"
+        http_request = (
+            b"GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n"
+        )
 
         try:
             writer.write(http_request)
@@ -532,11 +545,7 @@ async def check_mtproto_telethon(
 ) -> Tuple[bool, float]:
     try:
         from telethon import TelegramClient
-        from telethon.errors import (
-            AuthKeyError,
-            FloodWaitError,
-            RPCError,
-        )
+        from telethon.errors import AuthKeyError, FloodWaitError, RPCError
 
         proxy = (server, port, secret)
 
@@ -755,3 +764,135 @@ async def check_hysteria2_full(hy_data: Dict, timeout: int) -> Tuple[bool, float
         return True, speed
     except:
         return False, 0.0
+
+
+def _check_tor_dependencies(bridge_type: str) -> str | None:
+    if not TOR_INSTALLED:
+        return f"tor not found at {TOR_PATH} - run ./setup.sh"
+    if bridge_type in ("TOR_OBFS4", "TOR_WEBTUNNEL") and not LYREBIRD_INSTALLED:
+        return f"lyrebird not found at {LYREBIRD_PATH} - run ./setup.sh"
+    if bridge_type == "TOR_SNOWFLAKE" and not SNOWFLAKE_CLIENT_INSTALLED:
+        return (
+            f"snowflake-client not found at {SNOWFLAKE_CLIENT_PATH} - "
+            "install it (package snowflake-client or build from "
+            "gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake)"
+        )
+    return None
+
+
+async def check_tor_bridge(
+    bridge_line: str, bridge_type: str, timeout: int = 90
+) -> Tuple[bool, float]:
+    if timeout < TOR_BOOTSTRAP_TIMEOUT:
+        timeout = TOR_BOOTSTRAP_TIMEOUT
+
+    dep_error = _check_tor_dependencies(bridge_type)
+    if dep_error:
+        raise RuntimeError(dep_error)
+
+    bridge_data = parse_bridge_line(bridge_line)
+    if not bridge_data:
+        return False, 0.0
+
+    bridge_type_lower = bridge_type.replace("TOR_", "").lower()
+    if bridge_data["protocol"] != bridge_type_lower:
+        return False, 0.0
+
+    if bridge_type in ("TOR_OBFS4", "TOR_WEBTUNNEL"):
+        host = bridge_data["host"].strip("[]")
+        try:
+            pre_ok, _ = await tcp_precheck(host, int(bridge_data["port"]))
+        except Exception:
+            pre_ok = False
+        if not pre_ok:
+            return False, 0.0
+
+    socks_port = get_free_port(start=TOR_CHECK_PORTS_START)
+    control_port = get_free_port(start=TOR_CHECK_PORTS_START)
+    guard = 0
+    while control_port == socks_port and guard < 10:
+        control_port = get_free_port(start=TOR_CHECK_PORTS_START)
+        guard += 1
+    if control_port == socks_port:
+        return False, 0.0
+
+    if bridge_type == "TOR_SNOWFLAKE":
+        transport_lines = [
+            f"ClientTransportPlugin snowflake exec {SNOWFLAKE_CLIENT_PATH}"
+        ]
+    else:
+        transport_lines = [
+            f"ClientTransportPlugin obfs4 exec {LYREBIRD_PATH}",
+            f"ClientTransportPlugin webtunnel exec {LYREBIRD_PATH}",
+        ]
+
+    bridge_line_clean = " ".join(strip_bridge_prefix(bridge_line).split())
+
+    torrc_lines = [
+        f"SocksPort 127.0.0.1:{socks_port}",
+        f"ControlPort 127.0.0.1:{control_port}",
+        "CookieAuthentication 1",
+        "UseBridges 1",
+        *transport_lines,
+        f"Bridge {bridge_line_clean}",
+        "SafeLogging 0",
+        "Log notice file tor.log",
+        "DataDirectory .",
+    ]
+    torrc = "\n".join(torrc_lines)
+
+    workdir = tempfile.mkdtemp(prefix="torbridge_")
+    torrc_path = os.path.join(workdir, "torrc")
+    with open(torrc_path, "w") as f:
+        f.write(torrc + "\n")
+
+    proc = None
+    start = time.time()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            TOR_PATH,
+            "-f",
+            torrc_path,
+            cwd=workdir,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        log_path = os.path.join(workdir, "tor.log")
+        deadline = start + timeout
+        log_offset = 0
+
+        while time.time() < deadline:
+            if proc.returncode is not None:
+                break
+
+            try:
+                with open(log_path, "r", errors="replace") as lf:
+                    lf.seek(log_offset)
+                    chunk = lf.read()
+                    log_offset = lf.tell()
+                if chunk:
+                    for line in chunk.splitlines():
+                        if "Bootstrapped 100" in line:
+                            return True, round((time.time() - start) * 1000, 1)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+            await asyncio.sleep(0.5)
+
+        return False, 0.0
+    except Exception:
+        return False, 0.0
+    finally:
+        if proc and proc.returncode is None:
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        shutil.rmtree(workdir, ignore_errors=True)

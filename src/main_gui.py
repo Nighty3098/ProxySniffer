@@ -14,9 +14,11 @@ from config import (
     PROTOCOLS,
     SINGBOX_INSTALLED,
     SINGBOX_PATH,
+    TOR_BOOTSTRAP_TIMEOUT,
+    TOR_MAX_CONCURRENT,
     get_proxy_sources,
 )
-from core import check_proxy, load_proxies_from_sources
+from core import TOR_TYPES, check_proxy, load_proxies_from_sources
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
@@ -523,14 +525,32 @@ class ProxySnifferApp(ctk.CTk):
         if is_singbox and not SINGBOX_INSTALLED:
             self._log(f"sing-box not found at {SINGBOX_PATH} - using socket fallback")
 
+        is_tor = protocol in TOR_TYPES
+        if is_tor:
+            from checker import _check_tor_dependencies
+
+            dep_error = _check_tor_dependencies(protocol)
+            if dep_error:
+                self._log(dep_error)
+                return
+            self._log(
+                f"Tor bootstrap check: ≤{TOR_MAX_CONCURRENT} parallel, "
+                f"timeout {TOR_BOOTSTRAP_TIMEOUT}s per bridge"
+            )
+
         working = []
         failed = 0
         checked = 0
         start_time = time.time()
 
-        sem = asyncio.Semaphore(
-            min(8 if is_singbox else DEFAULT_WORKERS * 4, 64)
-        )
+        if is_tor:
+            sem = asyncio.Semaphore(TOR_MAX_CONCURRENT)
+            check_timeout = TOR_BOOTSTRAP_TIMEOUT
+        else:
+            sem = asyncio.Semaphore(
+                min(8 if is_singbox else DEFAULT_WORKERS * 4, 64)
+            )
+            check_timeout = 6
         test_url = None
 
         async with aiohttp.ClientSession(
@@ -553,7 +573,7 @@ class ProxySnifferApp(ctk.CTk):
                     try:
                         ok, speed = await check_proxy(
                             session, proxy, protocol,
-                            test_url=test_url, timeout=6,
+                            test_url=test_url, timeout=check_timeout,
                         )
                     except Exception:
                         pass
