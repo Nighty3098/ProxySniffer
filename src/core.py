@@ -16,15 +16,19 @@ from checker import (
     _check_tor_dependencies,
     check_mtproto_all_methods,
     check_tor_bridge,
-    check_vless,
     check_with_singbox,
-    generate_singbox_config,
 )
-from config import DEFAULT_WORKERS, TEST_URLS, TOR_BOOTSTRAP_TIMEOUT, TOR_MAX_CONCURRENT
+from config import (
+    DEFAULT_WORKERS,
+    SINGBOX_CHECK_TIMEOUT,
+    TEST_URLS,
+    TOR_BOOTSTRAP_TIMEOUT,
+    TOR_MAX_CONCURRENT,
+)
 
 TOR_TYPES = ("TOR_OBFS4", "TOR_WEBTUNNEL", "TOR_SNOWFLAKE")
 from fetcher import fetch_proxies
-from parsers import parse_mtproto_link, parse_proxy, parse_trojan_link, parse_vless_link
+from parsers import parse_mtproto_link, parse_proxy
 
 console = Console()
 
@@ -92,44 +96,44 @@ async def check_proxy(
             return False, 0.0
 
         if proxy_type.upper() == "HYSTERIA2":
-            ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
+            ok, speed = await check_with_singbox(
+                proxy, proxy_type, timeout=SINGBOX_CHECK_TIMEOUT
+            )
             if ok:
                 return True, speed
             return False, 0.0
 
         if proxy_type.upper() == "SHADOW_SOCKS":
-            ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
+            ok, speed = await check_with_singbox(
+                proxy, proxy_type, timeout=SINGBOX_CHECK_TIMEOUT
+            )
             if ok:
                 return True, speed
             return False, 0.0
 
         if proxy_type.upper() == "TROJAN":
-            tr_data = parse_trojan_link(proxy)
-            if not tr_data:
-                return False, 0.0
-
-            security = tr_data.get("security", "")
-            net_type = tr_data.get("type", "tcp")
-
-            ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
+            ok, speed = await check_with_singbox(
+                proxy, proxy_type, timeout=SINGBOX_CHECK_TIMEOUT
+            )
             if ok:
                 return True, speed
             return False, 0.0
 
         if proxy_type.upper() == "VMESS":
-            ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
+            ok, speed = await check_with_singbox(
+                proxy, proxy_type, timeout=SINGBOX_CHECK_TIMEOUT
+            )
             if ok:
                 return True, speed
             return False, 0.0
 
         if proxy_type.upper() == "VLESS":
-            vl_data = parse_vless_link(proxy)
-            if vl_data:
-                ok, speed = await check_vless(vl_data, timeout=timeout)
-                if ok:
-                    return True, speed
-
-            ok, speed = await check_with_singbox(proxy, proxy_type, timeout)
+            # VLESS can only be validated by actually passing traffic
+            # through the tunnel. TCP/TLS reachability of the endpoint
+            # says nothing about UUID/REALITY/SNI correctness.
+            ok, speed = await check_with_singbox(
+                proxy, proxy_type, timeout=SINGBOX_CHECK_TIMEOUT
+            )
             if ok:
                 return True, speed
             return False, 0.0
@@ -417,7 +421,6 @@ async def check_all_parallel(
         return await check_proxies_async(proxies_list, proxy_type, show_progress=True)
 
     from config import SINGBOX_POOL_SIZE
-    from parsers import parse_vless_link
 
     singbox_types = ["VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"]
     if proxy_type.upper() in singbox_types:
@@ -444,15 +447,9 @@ async def check_all_parallel(
             nonlocal working_count, failed_count
             async with semaphore:
                 link, ptype = proxy_tuple
-
-                if ptype.upper() == "VLESS":
-                    vl_data = parse_vless_link(link)
-                    if vl_data:
-                        ok, speed = await check_vless(vl_data, timeout=6)
-                    else:
-                        ok, speed = False, 0.0
-                else:
-                    ok, speed = await check_with_singbox(link, ptype, timeout=8)
+                ok, speed = await check_with_singbox(
+                    link, ptype, timeout=SINGBOX_CHECK_TIMEOUT
+                )
 
                 async with lock:
                     if ok and speed > 0:

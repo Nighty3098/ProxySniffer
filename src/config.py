@@ -40,7 +40,18 @@ TEST_URLS = [
     "https://cp.cloudflare.com/generate_204",
     "https://www.apple.com/library/test/success.html",
 ]
+# Through a sing-box tunnel HTTPS is more reliable: blocked port 80 or a
+# transparent HTTP portal must not make a working proxy look broken.
+SINGBOX_TEST_URLS = [
+    "https://www.gstatic.com/generate_204",
+    "https://cp.cloudflare.com/generate_204",
+    "http://www.gstatic.com/generate_204",
+    "https://www.apple.com/library/test/success.html",
+]
 SINGBOX_POOL_SIZE = max(4, CPU_CORES)
+SINGBOX_CHECK_TIMEOUT = 8
+SINGBOX_STARTUP_TIMEOUT = 3.0
+SINGBOX_REQUEST_TIMEOUT = 4.0
 TCP_PRECHECK_TIMEOUT = 1.5
 
 proxy_mapping = {

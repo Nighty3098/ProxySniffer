@@ -107,8 +107,12 @@ async def main():
             console.print(
                 f"[red][!] WARNING: sing-box not found at {SINGBOX_PATH}[/red]"
             )
-            console.print(f"[red][!] Using fallback socket check (less accurate)[/red]")
+            console.print(
+                f"[red][!] These protocols can only be verified through sing-box. "
+                f"Run ./setup.sh first.[/red]"
+            )
             time.sleep(2)
+            continue
 
         if not proxies:
             console.print(f"[red][!] No proxies loaded from sources![/red]")

@@ -88,6 +88,7 @@ proxy_MTPROTO = [
 proxy_HYSTERIA2 = [
     "https://gitverse.ru/api/repos/ru-wbl/wl/raw/branch/master/KvRuVPN/KvRuVPN.txt",
     "https://raw.githubusercontent.com/Argh94/Proxy-List/main/Hysteria2.txt",
+    "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/refs/heads/main/proxies/hysteria2.txt",
 ]
 
 proxy_SHADOW_SOCKS = [
@@ -343,9 +344,18 @@ proxy_VMESS = [
     "https://raw.githubusercontent.com/Pawdroid/Free-servers/refs/heads/main/sub",
     "https://raw.githubusercontent.com/V2RayRoot/V2RayConfig/refs/heads/main/Config/vless.txt",
     "https://raw.githubusercontent.com/yebekhe/TelegramV2rayCollector/main/sub/normal/vless",
+    "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/ss.txt",
+    "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/refs/heads/main/proxies/vmess.txt",
 ]
 
 proxy_VLESS = [
+    "https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/githubmirror/clean/vless.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/V2RAY.txt",
+    "https://raw.githubusercontent.com/Epodonios/v2ray-configs/refs/heads/main/All_Configs_Sub.txt",
+    "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/refs/heads/main/proxies/v2ray.txt",
+    "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/refs/heads/main/proxies/vless.txt",
+    "https://freeproxydb.com/api/proxy/subscribe?country=&protocol=&anonymity=&speed=0,60&https=0&count=500&subscribe_format=v2ray",
+    "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/vless.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-white-list-lite/refs/heads/main/AetrisVPN.txt",
     "https://gitverse.ru/api/repos/flaafix/AetrisVPN/raw/branch/master/AetrisVPN.txt",
     "https://raw.githubusercontent.com/flaafix/AetrisVPN-black-list/refs/heads/main/configs.txt",

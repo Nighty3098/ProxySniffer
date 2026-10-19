@@ -1,7 +1,8 @@
 import base64
 import binascii
+import uuid as uuid_module
 from typing import Dict, Optional
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 
 def strip_bridge_prefix(line: str) -> str:
@@ -318,44 +319,63 @@ def parse_vmess_link(link: str) -> Optional[Dict]:
 
 def parse_vless_link(link: str) -> Optional[Dict]:
     try:
-        if not link.startswith("vless://"):
+        link = link.strip()
+        if not link.lower().startswith("vless://"):
             return None
-        link = link.replace("vless://", "")
-        if "#" in link:
-            link = link.split("#")[0]
-        if "@" in link:
-            parts = link.split("?")
-            id_host = parts[0]
-            params = parts[1] if len(parts) > 1 else ""
 
-            id_, host_port = id_host.split("@")
-            if ":" in host_port:
-                host, port = host_port.split(":")
-                port = int(port)
-            else:
-                host = host_port
-                port = 443
+        parsed = urlsplit(link)
+        id_ = unquote(parsed.username or "").strip()
+        host = parsed.hostname
+        if not id_ or not host:
+            return None
 
-            result = {"server": host, "port": port, "id": id_}
+        try:
+            port = parsed.port or 443
+        except ValueError:
+            return None
+        if not 1 <= port <= 65535:
+            return None
 
-            if params:
-                params = unquote(params)
-                qs = parse_qs(params)
-                result["security"] = qs.get("security", ["none"])[0]
-                result["sni"] = qs.get("sni", [""])[0]
-                result["fp"] = qs.get("fp", [""])[0]
-                result["type"] = qs.get("type", ["tcp"])[0]
-                result["path"] = qs.get("path", [""])[0]
-                result["flow"] = qs.get("flow", [""])[0]
-                result["pbk"] = qs.get("pbk", [""])[0]
-                result["sid"] = qs.get("sid", [""])[0]
-                result["host"] = qs.get("host", [""])[0]
-                result["serviceName"] = qs.get("serviceName", [""])[0]
-                result["mode"] = qs.get("mode", [""])[0]
-                result["insecure"] = qs.get("insecure", ["0"])[0]
-                result["allowInsecure"] = qs.get("allowInsecure", ["0"])[0]
+        # UUID is the only identifier sing-box/Xray accept for VLESS.
+        # Normalizing also filters out random garbage links early.
+        try:
+            id_ = str(uuid_module.UUID(id_))
+        except (ValueError, AttributeError):
+            return None
 
-            return result
-    except:
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+
+        def get(*names: str, default: str = "") -> str:
+            for name in names:
+                values = qs.get(name)
+                if values and values[0]:
+                    return values[0]
+            return default
+
+        result = {
+            "server": host,
+            "port": port,
+            "id": id_,
+            "security": get("security", default="none").lower(),
+            "sni": get("sni", "peer", "serverName"),
+            "fp": get("fp", "fingerprint"),
+            "type": get("type", default="tcp").lower(),
+            "headerType": get("headerType", default="none").lower(),
+            "path": get("path"),
+            "flow": get("flow"),
+            "pbk": get("pbk", "publicKey"),
+            "sid": get("sid", "shortId"),
+            "host": get("host"),
+            "serviceName": get("serviceName", "service_name"),
+            "mode": get("mode"),
+            "alpn": get("alpn"),
+            "encryption": get("encryption", default="none"),
+            "packetEncoding": get("packetEncoding", "packet_encoding"),
+            "insecure": get("insecure", "allowInsecure", default="0"),
+            "allowInsecure": get("allowInsecure", "insecure", default="0"),
+        }
+
+        return result
+    except Exception:
         pass
     return None

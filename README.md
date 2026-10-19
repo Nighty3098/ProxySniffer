@@ -196,7 +196,7 @@ ProxySniffer/
 | ------------- | ----------------------------------------------- | ---------------------- |
 | HTTP/HTTPS    | aiohttp directly                                | No                     |
 | SOCKS4/SOCKS5 | aiohttp via proxy                               | No                     |
-| VLESS         | sing-box                                        | sing-box               |
+| VLESS         | end-to-end via sing-box (real HTTPS request through the tunnel) | sing-box |
 | VMESS         | sing-box                                        | sing-box               |
 | Trojan        | sing-box                                        | sing-box               |
 | Hysteria2     | sing-box                                        | sing-box               |
@@ -206,11 +206,22 @@ ProxySniffer/
 | TOR_WEBTUNNEL | full Tor bootstrap to 100% (TCP precheck first) | tor + lyrebird         |
 | TOR_SNOWFLAKE | full Tor bootstrap to 100%                      | tor + snowflake-client |
 
+### VLESS Verification
+
+VLESS links are verified end-to-end: sing-box connects through the proxy and performs a real HTTPS request. A link is reported as working only if actual traffic goes through the tunnel — a TCP/TLS handshake alone is not enough. A fast TCP precheck is used only to discard unreachable hosts.
+
+VLESS links that sing-box cannot faithfully reproduce are intentionally reported as not working instead of being counted as live (this avoids false positives):
+
+- transports `xhttp`/`splithttp`, `kcp`/`mkcp`, `http3`
+- `tcp` with `headerType=http` obfuscation
+- encrypted VLESS (`encryption` other than `none`)
+- REALITY without `pbk`, and unsupported `flow` values
+
 ## Troubleshooting
 
 ### Error "sing-box not found"
 
-Make sure sing-box is installed at `/tmp/sing-box-1.13.4-linux-amd64/sing-box`
+VLESS/VMESS/Trojan/Hysteria2/ShadowSocks are verified only through sing-box — there is no socket fallback. Run `./setup.sh` to download sing-box to `/tmp/sing-box-1.13.4-linux-amd64/sing-box`.
 
 ### Slow VLESS/VMESS Testing
 

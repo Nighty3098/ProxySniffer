@@ -13,11 +13,12 @@ from config import (
     LYREBIRD_PATH,
     SINGBOX_INSTALLED,
     SINGBOX_PATH,
-    SINGBOX_POOL_SIZE,
+    SINGBOX_REQUEST_TIMEOUT,
+    SINGBOX_STARTUP_TIMEOUT,
+    SINGBOX_TEST_URLS,
     SNOWFLAKE_CLIENT_INSTALLED,
     SNOWFLAKE_CLIENT_PATH,
     TCP_PRECHECK_TIMEOUT,
-    TEST_URLS,
     TOR_BOOTSTRAP_TIMEOUT,
     TOR_CHECK_PORTS_START,
     TOR_INSTALLED,
@@ -51,17 +52,125 @@ async def tcp_precheck(
         return False, 0.0
 
 
+def _is_true(value) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _build_vless_outbound(vl_data: Dict) -> dict | None:
+    """Build a sing-box VLESS outbound from parsed link data.
+
+    Returns None for links whose parameters cannot be reproduced by sing-box
+    (KCP/XHTTP/raw HTTP header obfuscation, broken REALITY, encrypted VLESS).
+    Such links are reported as not working instead of producing false
+    positives from a bare TCP/TLS reachability test.
+    """
+    security = (vl_data.get("security") or "none").lower()
+    net_type = (vl_data.get("type") or "tcp").lower()
+    header_type = (vl_data.get("headerType") or "none").lower()
+    flow = vl_data.get("flow") or ""
+
+    if security not in ("", "none", "tls", "reality"):
+        return None
+    if (vl_data.get("encryption") or "none").lower() not in ("", "none"):
+        return None
+    if net_type in ("kcp", "mkcp", "xhttp", "splithttp", "http3"):
+        return None
+    if net_type == "tcp" and header_type not in ("", "none"):
+        return None
+
+    outbound = {
+        "tag": "proxy",
+        "type": "vless",
+        "server": vl_data["server"],
+        "server_port": int(vl_data["port"]),
+        "uuid": vl_data["id"],
+    }
+
+    path = vl_data.get("path") or "/"
+    host = vl_data.get("host") or ""
+
+    if security == "none" and flow and net_type == "tcp":
+        # flow (vision) only makes sense over TLS, such a link is broken.
+        return None
+    if flow and net_type != "tcp":
+        flow = ""
+    if flow and flow not in ("xtls-rprx-vision", "xtls-rprx-vision-udp443"):
+        return None
+
+    if net_type == "ws":
+        outbound["transport"] = {"type": "ws", "path": path}
+        if host:
+            outbound["transport"]["headers"] = {"Host": host}
+    elif net_type == "httpupgrade":
+        outbound["transport"] = {"type": "httpupgrade", "path": path}
+        if host:
+            outbound["transport"]["headers"] = {"Host": host}
+    elif net_type == "grpc":
+        outbound["transport"] = {
+            "type": "grpc",
+            "service_name": vl_data.get("serviceName") or path.lstrip("/"),
+        }
+    elif net_type in ("http", "h2"):
+        transport = {"type": "http", "path": path}
+        hosts = [h.strip() for h in host.split(",") if h.strip()]
+        if hosts:
+            transport["host"] = hosts
+        outbound["transport"] = transport
+    elif net_type == "quic":
+        outbound["transport"] = {"type": "quic"}
+    elif net_type != "tcp":
+        return None
+
+    if security == "reality":
+        public_key = vl_data.get("pbk") or ""
+        if not public_key:
+            return None
+        outbound["tls"] = {
+            "enabled": True,
+            "server_name": vl_data.get("sni") or host or vl_data["server"],
+            "utls": {
+                "enabled": True,
+                "fingerprint": vl_data.get("fp") or "chrome",
+            },
+            "reality": {
+                "enabled": True,
+                "public_key": public_key,
+                "short_id": vl_data.get("sid") or "",
+            },
+        }
+    elif security == "tls":
+        tls = {
+            "enabled": True,
+            "insecure": _is_true(vl_data.get("insecure"))
+            or _is_true(vl_data.get("allowInsecure")),
+        }
+        server_name = vl_data.get("sni") or host
+        if server_name:
+            tls["server_name"] = server_name
+        if vl_data.get("fp"):
+            tls["utls"] = {"enabled": True, "fingerprint": vl_data["fp"]}
+        outbound["tls"] = tls
+
+    alpn = (vl_data.get("alpn") or "").strip()
+    if alpn and "tls" in outbound:
+        alpn_list = [a.strip() for a in alpn.split(",") if a.strip()]
+        if alpn_list:
+            outbound["tls"]["alpn"] = alpn_list
+
+    if flow:
+        outbound["flow"] = flow
+
+    packet_encoding = (vl_data.get("packetEncoding") or "").lower()
+    if packet_encoding in ("xudp", "packetaddr"):
+        outbound["packet_encoding"] = packet_encoding
+
+    return outbound
+
+
 def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
     try:
         config = {
             "log": {"level": "error"},
-            "dns": {
-                "independent_cache": True,
-                "servers": [
-                    {"address": "8.8.8.8"},
-                    {"address": "1.1.1.1"},
-                ],
-            },
             "inbounds": [{"tag": "mixed-in", "type": "mixed", "listen_port": 1080}],
             "outbounds": [],
         }
@@ -130,8 +239,6 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                     "type": "grpc",
                     "service_name": tr_data.get("serviceName", ""),
                 }
-                if tr_data.get("mode"):
-                    outbound["transport"]["multiplex"] = {"enabled": True}
 
             security = tr_data.get("security", "")
             if security == "tls":
@@ -162,7 +269,7 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
                 "server": vm_data["server"],
                 "server_port": vm_data["port"],
                 "uuid": vm_data["id"],
-                "alterID": vm_data.get("aid", 0),
+                "alter_id": vm_data.get("aid", 0),
             }
 
             net_type = vm_data.get("net", "tcp")
@@ -201,68 +308,9 @@ def generate_singbox_config(proxy_link: str, proxy_type: str) -> dict | None:
             vl_data = parse_vless_link(proxy_link)
             if not vl_data:
                 return None
-            outbound = {
-                "tag": "proxy",
-                "type": "vless",
-                "server": vl_data["server"],
-                "server_port": vl_data["port"],
-                "uuid": vl_data["id"],
-            }
-
-            security = vl_data.get("security", "none")
-            net_type = vl_data.get("type", "tcp")
-            path = vl_data.get("path", "")
-            flow = vl_data.get("flow", "")
-
-            if net_type == "ws":
-                outbound["transport"] = {"type": "ws", "path": path}
-                if vl_data.get("host"):
-                    outbound["transport"]["headers"] = {"Host": vl_data["host"]}
-            elif net_type == "httpupgrade":
-                outbound["transport"] = {"type": "httpupgrade", "path": path}
-                if vl_data.get("host"):
-                    outbound["transport"]["headers"] = {"Host": vl_data["host"]}
-            elif net_type == "grpc":
-                outbound["transport"] = {
-                    "type": "grpc",
-                    "service_name": path or vl_data.get("serviceName", ""),
-                }
-                if vl_data.get("mode") == "gun":
-                    outbound["transport"]["multiplex"] = {"enabled": True}
-            elif net_type == "h2":
-                outbound["transport"] = {"type": "http", "path": path}
-
-            if security == "reality":
-                outbound["tls"] = {
-                    "enabled": True,
-                    "server_name": vl_data.get("sni", "www.apple.com"),
-                    "reality": {
-                        "public_key": vl_data.get("pbk", ""),
-                        "short_id": vl_data.get("sid", ""),
-                    },
-                }
-                if vl_data.get("fp"):
-                    outbound["tls"]["utls"] = {
-                        "enabled": True,
-                        "fingerprint": vl_data["fp"],
-                    }
-                if flow and flow not in ["", "none"]:
-                    outbound["flow"] = flow
-            elif security == "tls":
-                outbound["tls"] = {
-                    "enabled": True,
-                    "insecure": vl_data.get("insecure", "0") == "1"
-                    or vl_data.get("allowInsecure", "0") == "1",
-                }
-                if vl_data.get("sni"):
-                    outbound["tls"]["server_name"] = vl_data["sni"]
-                if vl_data.get("fp"):
-                    outbound["tls"]["utls"] = {
-                        "enabled": True,
-                        "fingerprint": vl_data["fp"],
-                    }
-                if flow:
-                    outbound["flow"] = flow
+            outbound = _build_vless_outbound(vl_data)
+            if not outbound:
+                return None
 
             config["outbounds"].append(outbound)
 
@@ -311,14 +359,51 @@ def generate_singbox_config_trimmed(proxy_link: str, proxy_type: str) -> dict | 
     if not config:
         return None
 
-    config["log"] = {"level": "none"}
-    config["dns"] = {"servers": [{"address": "8.8.8.8"}]}
+    # "level": "none" is rejected by sing-box >= 1.14 and legacy dns.servers
+    # entries are removed there; a bare config runs on both 1.13 and 1.14+.
+    config["log"] = {"disabled": True}
+    config.pop("dns", None)
     config["inbounds"] = [{"tag": "mixed-in", "type": "mixed", "listen_port": 1080}]
 
     for outbound in config.get("outbounds", []):
         outbound.pop("mux", None)
 
     return config
+
+
+async def _wait_for_listener(proc, port: int, timeout: float) -> bool:
+    """Wait until sing-box listens on `port` or exits (bad config, dead server)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.returncode is not None:
+            return False
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", port), timeout=0.25
+            )
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return True
+        except (OSError, asyncio.TimeoutError):
+            await asyncio.sleep(0.05)
+    return False
+
+
+async def _stop_process(proc) -> None:
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+        await asyncio.wait_for(proc.wait(), timeout=2)
+    except Exception:
+        try:
+            proc.kill()
+            await asyncio.wait_for(proc.wait(), timeout=1)
+        except Exception:
+            pass
 
 
 async def _check_singbox_async(
@@ -352,14 +437,18 @@ async def _check_singbox_async(
         if data:
             server_host, server_port = data.get("server"), data.get("port")
 
+    # TCP precheck is only a fast filter for unreachable hosts, never a
+    # proof that the proxy works: reachable TCP ports are very common on
+    # dead/shared VLESS endpoints.
     if server_host and server_port:
-        pre_ok, _ = await tcp_precheck(server_host, int(server_port))
+        try:
+            pre_ok, _ = await tcp_precheck(server_host, int(server_port))
+        except Exception:
+            pre_ok = False
         if not pre_ok:
             return proxy_link, proxy_type, False, 0.0
 
     config = generate_singbox_config_trimmed(proxy_link, proxy_type)
-    if not config:
-        config = generate_singbox_config(proxy_link, proxy_type)
     if not config:
         return proxy_link, proxy_type, False, 0.0
 
@@ -371,73 +460,64 @@ async def _check_singbox_async(
 
     proc = None
     try:
-        start = time.time()
-
         proc = await asyncio.create_subprocess_exec(
             SINGBOX_PATH,
             "run",
             "-c",
             config_path,
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
 
-        for _ in range(timeout * 5):
-            await asyncio.sleep(0.2)
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", port), timeout=1
-                )
-                writer.close()
-                await writer.wait_closed()
+        start = time.monotonic()
+        if not await _wait_for_listener(proc, port, SINGBOX_STARTUP_TIMEOUT):
+            return proxy_link, proxy_type, False, 0.0
 
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=8, connect=4),
-                    read_bufsize=8192,
-                ) as session:
-                    for test_url in TEST_URLS:
-                        try:
-                            async with session.get(
-                                test_url,
-                                proxy=f"http://127.0.0.1:{port}",
-                                timeout=aiohttp.ClientTimeout(total=8),
-                                ssl=False,
-                                allow_redirects=False,
-                            ) as resp:
-                                if 200 <= resp.status < 400:
-                                    speed = round((time.time() - start) * 1000, 1)
-                                else:
-                                    continue
-                        except Exception:
-                            continue
-                        proc.terminate()
-                        try:
-                            await asyncio.wait_for(proc.wait(), timeout=2)
-                        except Exception:
-                            proc.kill()
-                        return proxy_link, proxy_type, True, speed
-            except Exception:
-                pass
+        deadline = start + max(timeout, 2)
 
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=2)
-        except:
-            proc.kill()
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(
+                total=SINGBOX_REQUEST_TIMEOUT, connect=SINGBOX_REQUEST_TIMEOUT
+            ),
+            read_bufsize=8192,
+        ) as session:
+            for test_url in SINGBOX_TEST_URLS:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.3:
+                    break
+
+                request_timeout = min(SINGBOX_REQUEST_TIMEOUT, remaining)
+                request_start = time.monotonic()
+                try:
+                    async with session.get(
+                        test_url,
+                        proxy=f"http://127.0.0.1:{port}",
+                        timeout=aiohttp.ClientTimeout(
+                            total=request_timeout, connect=request_timeout
+                        ),
+                        ssl=False,
+                        allow_redirects=False,
+                    ) as resp:
+                        if 200 <= resp.status < 400:
+                            speed = round((time.monotonic() - request_start) * 1000, 1)
+                            return proxy_link, proxy_type, True, speed
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue
+
         return proxy_link, proxy_type, False, 0.0
 
+    except asyncio.CancelledError:
+        raise
     except Exception:
-        if proc:
-            try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=2)
-            except:
-                proc.kill()
         return proxy_link, proxy_type, False, 0.0
     finally:
+        if proc is not None:
+            await _stop_process(proc)
         try:
             os.unlink(config_path)
-        except:
+        except OSError:
             pass
 
 
@@ -714,36 +794,6 @@ async def check_vmess(vm_data: Dict, timeout: int) -> Tuple[bool, float]:
             await writer.wait_closed()
             speed = round((time.time() - start) * 1000, 1)
             return True, speed
-    except:
-        return False, 0.0
-
-
-async def check_vless(vl_data: Dict, timeout: int) -> Tuple[bool, float]:
-    try:
-        start = time.time()
-        server = vl_data["server"]
-        port = vl_data["port"]
-        security = vl_data.get("security", "none")
-        net_type = vl_data.get("type", "tcp")
-
-        if security in ["tls", "reality"] or net_type == "tcp":
-            import ssl
-
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(server, port, ssl=ctx), timeout=timeout
-            )
-        else:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(server, port), timeout=timeout
-            )
-
-        writer.close()
-        await writer.wait_closed()
-        speed = round((time.time() - start) * 1000, 1)
-        return True, speed
     except:
         return False, 0.0
 

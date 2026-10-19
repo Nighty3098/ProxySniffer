@@ -523,7 +523,11 @@ class ProxySnifferApp(ctk.CTk):
 
         is_singbox = protocol in ["VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"]
         if is_singbox and not SINGBOX_INSTALLED:
-            self._log(f"sing-box not found at {SINGBOX_PATH} - using socket fallback")
+            self._log(
+                f"sing-box not found at {SINGBOX_PATH} - run ./setup.sh, "
+                f"these protocols cannot be verified without it"
+            )
+            return
 
         is_tor = protocol in TOR_TYPES
         if is_tor:
