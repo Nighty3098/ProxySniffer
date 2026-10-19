@@ -406,47 +406,65 @@ async def _stop_process(proc) -> None:
             pass
 
 
+# Protocols whose endpoint listens on TCP can be filtered by a quick TCP
+# connect. Hysteria2 is QUIC/UDP only: a TCP connect to its port usually
+# fails even on a healthy server, so it is never prechecked this way.
+TCP_PRECHECK_TYPES = ("VLESS", "VMESS", "TROJAN", "SHADOW_SOCKS")
+
+_LINK_PARSERS = {
+    "VLESS": parse_vless_link,
+    "VMESS": parse_vmess_link,
+    "TROJAN": parse_trojan_link,
+    "HYSTERIA2": parse_hysteria2_link,
+    "SHADOW_SOCKS": parse_shadowsocks_link,
+}
+
+
+def get_link_server(
+    proxy_link: str, proxy_type: str
+) -> Tuple[str | None, int | None]:
+    """Extract (server, port) from a share link for the TCP precheck.
+
+    Returns (None, None) when the link cannot be parsed.
+    """
+    parser = _LINK_PARSERS.get(proxy_type.upper())
+    if parser is None:
+        return None, None
+    data = parser(proxy_link)
+    if not data:
+        return None, None
+    server, port = data.get("server"), data.get("port")
+    if not server or not port:
+        return None, None
+    try:
+        return server, int(port)
+    except (TypeError, ValueError):
+        return None, None
+
+
 async def _check_singbox_async(
-    proxy_link: str, proxy_type: str, port: int, timeout: int
+    proxy_link: str,
+    proxy_type: str,
+    port: int,
+    timeout: int,
+    skip_precheck: bool = False,
 ) -> Tuple[str, str, bool, float]:
     if not SINGBOX_INSTALLED:
         return proxy_link, proxy_type, False, 0.0
 
-    server_host = None
-    server_port = None
-    ptype = proxy_type.upper()
-
-    if ptype == "VLESS":
-        data = parse_vless_link(proxy_link)
-        if data:
-            server_host, server_port = data.get("server"), data.get("port")
-    elif ptype == "VMESS":
-        data = parse_vmess_link(proxy_link)
-        if data:
-            server_host, server_port = data.get("server"), data.get("port")
-    elif ptype == "TROJAN":
-        data = parse_trojan_link(proxy_link)
-        if data:
-            server_host, server_port = data.get("server"), data.get("port")
-    elif ptype == "HYSTERIA2":
-        data = parse_hysteria2_link(proxy_link)
-        if data:
-            server_host, server_port = data.get("server"), data.get("port")
-    elif ptype == "SHADOW_SOCKS":
-        data = parse_shadowsocks_link(proxy_link)
-        if data:
-            server_host, server_port = data.get("server"), data.get("port")
-
     # TCP precheck is only a fast filter for unreachable hosts, never a
     # proof that the proxy works: reachable TCP ports are very common on
-    # dead/shared VLESS endpoints.
-    if server_host and server_port:
-        try:
-            pre_ok, _ = await tcp_precheck(server_host, int(server_port))
-        except Exception:
-            pre_ok = False
-        if not pre_ok:
-            return proxy_link, proxy_type, False, 0.0
+    # dead/shared endpoints. The parallel engine runs the precheck as a
+    # separate mass phase (core.run_checks) and passes skip_precheck=True.
+    if not skip_precheck and proxy_type.upper() in TCP_PRECHECK_TYPES:
+        server_host, server_port = get_link_server(proxy_link, proxy_type)
+        if server_host and server_port:
+            try:
+                pre_ok, _ = await tcp_precheck(server_host, server_port)
+            except Exception:
+                pre_ok = False
+            if not pre_ok:
+                return proxy_link, proxy_type, False, 0.0
 
     config = generate_singbox_config_trimmed(proxy_link, proxy_type)
     if not config:

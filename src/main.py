@@ -1,14 +1,23 @@
 import asyncio
 import os
+import threading
 import time
 from datetime import datetime
 from typing import List, Tuple
 
 from colorama import Fore, init
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.table import Table
 
 from config import (
+    CHECK_THREADS,
     CPU_CORES,
     DEFAULT_LIMITS,
     DEFAULT_WORKERS,
@@ -17,7 +26,7 @@ from config import (
     get_proxy_sources,
     proxy_mapping,
 )
-from core import check_all_parallel, load_proxies_from_sources
+from core import load_proxies_from_sources, run_checks
 
 proxy_sources = get_proxy_sources()
 
@@ -37,6 +46,63 @@ def save_working_proxies(working: List[Tuple], proxy_type: str):
     console.print(
         f"[green][+] Saved {len(working)} working proxies to {filename}[/green]"
     )
+
+
+def run_checks_with_progress(
+    proxies: List[str], proxy_type: str
+) -> Tuple[List[Tuple[str, float]], bool]:
+    """Run the shared thread-pool checker, drawing a rich progress bar."""
+    stop_event = threading.Event()
+    lock = threading.Lock()
+    counters = {"working": 0, "failed": 0}
+    total = len(proxies)
+
+    progress_columns = [
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[cyan]{task.fields[status]}[/cyan]"),
+    ]
+
+    with Progress(*progress_columns, console=console) as progress:
+        task = progress.add_task(
+            f"[green]Checking {proxy_type}...",
+            total=total,
+            status=f"[yellow]0/{total}[/yellow] | [red]✗ 0[/red]",
+        )
+
+        def on_result(proxy: str, ok: bool, speed: float) -> None:
+            # Called from worker threads: rich is not thread-safe.
+            with lock:
+                if ok and speed > 0:
+                    counters["working"] += 1
+                    console.print(
+                        f"[green]✓[/green] [cyan]{proxy[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
+                    )
+                else:
+                    counters["failed"] += 1
+                    console.print(f"[red]x[/red] [cyan]{proxy[:60]}...[/cyan]")
+
+                checked = counters["working"] + counters["failed"]
+                try:
+                    progress.update(
+                        task,
+                        advance=1,
+                        status=(
+                            f"[cyan]{checked}[/cyan]/[yellow]{total}[/yellow] "
+                            f"| [green]✓{counters['working']}[/green] "
+                            f"| [red]✗{counters['failed']}[/red]"
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        working = run_checks(
+            proxies, proxy_type, on_result=on_result, stop_event=stop_event
+        )
+
+    return working, stop_event.is_set()
 
 
 def print_banner():
@@ -124,7 +190,8 @@ async def main():
 
         console.print(f"[green][*] Checking {proxy_type} proxies...[/green]")
         console.print(
-            f"[cyan][*] Using {DEFAULT_WORKERS} workers for parallel checking[/cyan]"
+            f"[cyan][*] Parallel check: {CHECK_THREADS} threads "
+            f"(same engine in CLI and GUI)[/cyan]"
         )
         console.print(f"[yellow][*] Press Ctrl+C to stop and see results[/yellow]")
 
@@ -132,10 +199,14 @@ async def main():
         stopped = False
 
         try:
-            working = await check_all_parallel(proxies, proxy_type)
+            working, stopped = run_checks_with_progress(proxies, proxy_type)
         except (KeyboardInterrupt, asyncio.CancelledError):
             stopped = True
             console.print(f"\n[yellow][!] Stopped by user[/yellow]")
+        except RuntimeError as e:
+            console.print(f"\n[red][!] {e}[/red]")
+            time.sleep(2)
+            continue
         except Exception as e:
             console.print(f"\n[red][!] Error: {e}[/red]")
 

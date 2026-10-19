@@ -48,11 +48,24 @@ SINGBOX_TEST_URLS = [
     "http://www.gstatic.com/generate_204",
     "https://www.apple.com/library/test/success.html",
 ]
-SINGBOX_POOL_SIZE = max(4, CPU_CORES)
 SINGBOX_CHECK_TIMEOUT = 8
 SINGBOX_STARTUP_TIMEOUT = 3.0
 SINGBOX_REQUEST_TIMEOUT = 4.0
 TCP_PRECHECK_TIMEOUT = 1.5
+
+# Parallel checking engine, shared by CLI and GUI:
+# CHECK_THREADS OS threads, each running its own asyncio event loop.
+CHECK_THREADS = min(8, max(2, CPU_CORES))
+# Total simultaneous checks across all threads (aiohttp protocols).
+HTTP_MAX_CONCURRENT = DEFAULT_WORKERS * 10
+HTTP_CHECK_CONNECT_TIMEOUT = 2
+HTTP_CHECK_REQUEST_TIMEOUT = 4
+HTTP_CHECK_SESSION_TIMEOUT = 8
+# Total simultaneous sing-box processes (same cap as before).
+SINGBOX_MAX_CONCURRENT = min(16, max(8, CPU_CORES))
+# Mass TCP precheck: how many connects run in parallel while filtering
+# unreachable hosts before the sing-box phase.
+SINGBOX_PRECHECK_CONCURRENT = 128
 
 proxy_mapping = {
     1: "HTTP",

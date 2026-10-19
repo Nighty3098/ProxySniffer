@@ -217,6 +217,18 @@ VLESS links that sing-box cannot faithfully reproduce are intentionally reported
 - encrypted VLESS (`encryption` other than `none`)
 - REALITY without `pbk`, and unsupported `flow` values
 
+## Parallel Checking
+
+Both the CLI and the GUI use the same threaded checking engine (`core.run_checks`):
+
+- a pool of OS threads, each running its own asyncio event loop;
+- for HTTP/HTTPS/SOCKS/MTProto the total concurrency is `HTTP_MAX_CONCURRENT` (checked via aiohttp);
+- for VLESS/VMESS/Trojan/Hysteria2/ShadowSocks a mass TCP precheck first filters unreachable hosts (skipped for hysteria2, which is QUIC/UDP), then up to `SINGBOX_MAX_CONCURRENT` sing-box processes run in parallel;
+- `on_result` callbacks come from worker threads: the CLI serializes rich output with a lock, the GUI marshals updates to the Tk thread via `after()`;
+- a `threading.Event` stop request cancels in-flight checks (CLI: Ctrl+C, GUI: Stop button) and returns partial results.
+
+Concurrency caps are configured in `config.py` (`CHECK_THREADS`, `HTTP_MAX_CONCURRENT`, `SINGBOX_MAX_CONCURRENT`, `TOR_MAX_CONCURRENT`).
+
 ## Troubleshooting
 
 ### Error "sing-box not found"
@@ -225,7 +237,7 @@ VLESS/VMESS/Trojan/Hysteria2/ShadowSocks are verified only through sing-box — 
 
 ### Slow VLESS/VMESS Testing
 
-This is normal - a separate sing-box process is started for each proxy. Limit the number of proxies to 500.
+This is normal - a separate sing-box process is started for each proxy. Unreachable hosts are dropped by a fast mass TCP precheck so they do not occupy sing-box processes, and checks are spread across `CHECK_THREADS` worker threads. Limit the number of proxies to 500.
 
 ### Error "tor not found" / "lyrebird not found"
 

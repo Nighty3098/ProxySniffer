@@ -5,12 +5,10 @@ import tkinter as tk
 from datetime import datetime
 from typing import List, Tuple
 
-import aiohttp
 import customtkinter as ctk
 
 from config import (
     DEFAULT_LIMITS,
-    DEFAULT_WORKERS,
     PROTOCOLS,
     SINGBOX_INSTALLED,
     SINGBOX_PATH,
@@ -18,7 +16,12 @@ from config import (
     TOR_MAX_CONCURRENT,
     get_proxy_sources,
 )
-from core import TOR_TYPES, check_proxy, load_proxies_from_sources
+from core import (
+    SINGBOX_TYPES,
+    TOR_TYPES,
+    load_proxies_from_sources,
+    run_checks,
+)
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
@@ -421,6 +424,11 @@ class ProxySnifferApp(ctk.CTk):
         self._stop_event = threading.Event()
         self._worker_thread = None
         self._working_results: List[Tuple[str, float]] = []
+        self._total = 0
+        self._checked = 0
+        self._failed = 0
+        self._working_count = 0
+        self._start_time = time.time()
 
         self.sidebar = SidebarFrame(
             self,
@@ -442,20 +450,17 @@ class ProxySnifferApp(ctk.CTk):
     def _log(self, msg):
         self.after(0, lambda: self.content.log(msg))
 
-    def _update_ui(self, value, checked, total, working, failed):
-        def _do():
-            self.content.update_progress(
-                value, f"{checked}/{total}  OK {working}  Fail {failed}"
-            )
-            self.content.update_stats(checked, total, working, failed)
-        self.after(0, _do)
-
     def _add_result(self, index, proxy, speed):
         self.after(0, lambda: self.content.add_result_row(index, proxy, speed))
 
     def _on_start(self):
         self._stop_event.clear()
         self._working_results.clear()
+        self._total = 0
+        self._checked = 0
+        self._failed = 0
+        self._working_count = 0
+        self._start_time = time.time()
 
         self.sidebar.set_running(True)
         self.sidebar.set_results_available(False)
@@ -501,116 +506,100 @@ class ProxySnifferApp(ctk.CTk):
 
     def _run_worker(self, protocol, limit):
         try:
-            asyncio.run(self._check_proxies(protocol, limit))
+            proxy_sources = get_proxy_sources()
+
+            self._log(f"Loading {protocol} proxies...")
+            proxies = asyncio.run(
+                load_proxies_from_sources(proxy_sources, protocol, quiet=True)
+            )
+            proxies = proxies[:limit]
+            self._total = len(proxies)
+
+            if self._total == 0:
+                self._log("No proxies loaded!")
+                return
+
+            self._log(f"Loaded {self._total} {protocol} proxies")
+
+            if protocol in SINGBOX_TYPES and not SINGBOX_INSTALLED:
+                self._log(
+                    f"sing-box not found at {SINGBOX_PATH} - run ./setup.sh, "
+                    f"these protocols cannot be verified without it"
+                )
+                return
+
+            if protocol in TOR_TYPES:
+                from checker import _check_tor_dependencies
+
+                dep_error = _check_tor_dependencies(protocol)
+                if dep_error:
+                    self._log(dep_error)
+                    return
+                self._log(
+                    f"Tor bootstrap check: ≤{TOR_MAX_CONCURRENT} parallel, "
+                    f"timeout {TOR_BOOTSTRAP_TIMEOUT}s per bridge"
+                )
+
+            self._log(f"Checking {self._total} {protocol} proxies...")
+            self._start_time = time.time()
+
+            # The same threaded engine the CLI uses; callbacks arrive from
+            # its worker threads and are marshalled to the UI thread here.
+            working = run_checks(
+                proxies,
+                protocol,
+                on_result=self._on_check_result,
+                stop_event=self._stop_event,
+            )
+            self._working_results = working
+
+            if self._stop_event.is_set():
+                self._log(
+                    f"Stopped. Found {len(working)} working proxies before stop"
+                )
+            else:
+                elapsed = time.time() - self._start_time
+                self._log(
+                    f"Done! Found {len(working)}/{self._total} "
+                    f"working proxies in {elapsed:.1f}s"
+                )
+        except RuntimeError as e:
+            self._log(str(e))
         except Exception as e:
             self._log(f"Error: {e}")
         finally:
             self._finish()
 
-    async def _check_proxies(self, protocol, limit):
-        proxy_sources = get_proxy_sources()
+    def _on_check_result(self, proxy, ok, speed):
+        """Called from checker worker threads; marshals updates to the UI."""
 
-        self._log(f"Loading {protocol} proxies...")
-        proxies = await load_proxies_from_sources(proxy_sources, protocol, quiet=True)
-        proxies = proxies[:limit]
-        total = len(proxies)
+        def _do():
+            self._checked += 1
+            if ok and speed > 0:
+                self._working_count += 1
+                self._log(f"  {proxy[:65]}  {speed}ms")
+                self._add_result(self._working_count, proxy, speed)
+            else:
+                self._failed += 1
 
-        if total == 0:
-            self._log("No proxies loaded!")
-            return
-
-        self._log(f"Loaded {total} {protocol} proxies")
-
-        is_singbox = protocol in ["VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"]
-        if is_singbox and not SINGBOX_INSTALLED:
-            self._log(
-                f"sing-box not found at {SINGBOX_PATH} - run ./setup.sh, "
-                f"these protocols cannot be verified without it"
+            elapsed = time.time() - self._start_time
+            value = self._checked / self._total if self._total else 0
+            eta = (
+                int((elapsed / self._checked) * (self._total - self._checked))
+                if self._checked > 0
+                else 0
             )
-            return
-
-        is_tor = protocol in TOR_TYPES
-        if is_tor:
-            from checker import _check_tor_dependencies
-
-            dep_error = _check_tor_dependencies(protocol)
-            if dep_error:
-                self._log(dep_error)
-                return
-            self._log(
-                f"Tor bootstrap check: ≤{TOR_MAX_CONCURRENT} parallel, "
-                f"timeout {TOR_BOOTSTRAP_TIMEOUT}s per bridge"
+            eta_str = f"ETA: {eta // 60}m {eta % 60}s" if eta > 0 else ""
+            self.content.update_progress(
+                value,
+                f"{self._checked}/{self._total}  OK {self._working_count}  "
+                f"Fail {self._failed}  {eta_str}",
+            )
+            self.content.update_stats(
+                self._checked, self._total, self._working_count, self._failed
             )
 
-        working = []
-        failed = 0
-        checked = 0
-        start_time = time.time()
-
-        if is_tor:
-            sem = asyncio.Semaphore(TOR_MAX_CONCURRENT)
-            check_timeout = TOR_BOOTSTRAP_TIMEOUT
-        else:
-            sem = asyncio.Semaphore(
-                min(8 if is_singbox else DEFAULT_WORKERS * 4, 64)
-            )
-            check_timeout = 6
-        test_url = None
-
-        async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(
-                limit=200,
-                ssl=False,
-                limit_per_host=50,
-                ttl_dns_cache=600,
-            ),
-            timeout=aiohttp.ClientTimeout(total=10, connect=3),
-        ) as session:
-
-            async def check_one(idx, proxy):
-                nonlocal checked, failed
-                if self._stop_event.is_set():
-                    return
-
-                async with sem:
-                    ok, speed = False, 0.0
-                    try:
-                        ok, speed = await check_proxy(
-                            session, proxy, protocol,
-                            test_url=test_url, timeout=check_timeout,
-                        )
-                    except Exception:
-                        pass
-
-                    checked += 1
-                    if ok and speed > 0:
-                        working.append((proxy, speed))
-                        self._log(f"  {proxy[:65]}  {speed}ms")
-                        self._add_result(len(working), proxy, speed)
-                    else:
-                        failed += 1
-
-                    elapsed = time.time() - start_time
-                    value = checked / total
-                    eta = int((elapsed / checked) * (total - checked)) if checked > 0 else 0
-                    eta_str = f"ETA: {eta // 60}m {eta % 60}s" if eta > 0 else ""
-                    self._update_ui(value, checked, total, len(working), failed)
-
-            self._log(f"Checking {total} {protocol} proxies...")
-
-            tasks = [
-                asyncio.create_task(check_one(i, p))
-                for i, p in enumerate(proxies)
-            ]
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        working.sort(key=lambda x: x[1])
-        self._working_results = working
-
-        elapsed = time.time() - start_time
-        self._log(
-            f"Done! Found {len(working)}/{total} working proxies in {elapsed:.1f}s"
-        )
+        self.after(0, _do)
 
 
 def main():

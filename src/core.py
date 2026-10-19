@@ -1,34 +1,45 @@
 import asyncio
+import concurrent.futures
+import functools
+import threading
 import time
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 
 import aiohttp
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-)
 
 from checker import (
+    TCP_PRECHECK_TYPES,
+    _check_singbox_async,
     _check_tor_dependencies,
     check_mtproto_all_methods,
     check_tor_bridge,
     check_with_singbox,
+    get_link_server,
+    tcp_precheck,
 )
 from config import (
-    DEFAULT_WORKERS,
+    CHECK_THREADS,
+    HTTP_CHECK_CONNECT_TIMEOUT,
+    HTTP_CHECK_REQUEST_TIMEOUT,
+    HTTP_CHECK_SESSION_TIMEOUT,
+    HTTP_MAX_CONCURRENT,
     SINGBOX_CHECK_TIMEOUT,
+    SINGBOX_INSTALLED,
+    SINGBOX_MAX_CONCURRENT,
+    SINGBOX_PATH,
+    SINGBOX_PRECHECK_CONCURRENT,
     TEST_URLS,
     TOR_BOOTSTRAP_TIMEOUT,
     TOR_MAX_CONCURRENT,
 )
 
 TOR_TYPES = ("TOR_OBFS4", "TOR_WEBTUNNEL", "TOR_SNOWFLAKE")
+SINGBOX_TYPES = ("VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS")
+
 from fetcher import fetch_proxies
 from parsers import parse_mtproto_link, parse_proxy
+from utils import get_free_port
 
 console = Console()
 
@@ -173,339 +184,369 @@ async def check_proxy(
     return False, 0.0
 
 
-async def check_proxies_async(
-    proxies_list: List[str],
+ResultCallback = Callable[[str, bool, float], None]
+
+
+def _split_round_robin(items: List[str], parts: int) -> List[List[str]]:
+    """Split items into `parts` chunks of roughly equal size."""
+    return [items[i::parts] for i in range(parts)]
+
+
+def _shard_count(items: List[str], max_threads: int) -> int:
+    """How many worker threads to use for `items` (at least one)."""
+    return max(1, min(max_threads, len(items)))
+
+
+class _LoopRegistry:
+    """Tracks worker event loops so a stop request made from another thread
+    can cancel the checks that are currently in flight."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loops: set = set()
+
+    def register(self, loop: asyncio.AbstractEventLoop) -> None:
+        with self._lock:
+            self._loops.add(loop)
+
+    def discard(self, loop: asyncio.AbstractEventLoop) -> None:
+        with self._lock:
+            self._loops.discard(loop)
+
+    def cancel_all(self) -> None:
+        with self._lock:
+            loops = list(self._loops)
+        for loop in loops:
+            try:
+                loop.call_soon_threadsafe(self._cancel_tasks, loop)
+            except RuntimeError:
+                pass  # loop already closed
+
+    @staticmethod
+    def _cancel_tasks(loop: asyncio.AbstractEventLoop) -> None:
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
+
+
+def _thread_entry(coro_factory, registry: _LoopRegistry):
+    """Worker thread body: run one coroutine on a fresh event loop."""
+
+    async def runner():
+        loop = asyncio.get_running_loop()
+        registry.register(loop)
+        try:
+            return await coro_factory()
+        finally:
+            registry.discard(loop)
+
+    try:
+        return asyncio.run(runner())
+    except asyncio.CancelledError:
+        return None
+    except Exception:
+        return None
+
+
+def _watch_stop(stop_event, done_event, registry: _LoopRegistry) -> None:
+    """Daemon thread: cancels in-flight checks once stop_event is set."""
+    while not done_event.wait(0.25):
+        if stop_event.is_set():
+            registry.cancel_all()
+            return
+
+
+async def _tor_shard(
+    bridges: List[str],
     proxy_type: str,
-    max_concurrent: int = DEFAULT_WORKERS * 10,
-    show_progress: bool = True,
-):
+    report: ResultCallback,
+    stop_event: threading.Event,
+) -> None:
+    for bridge in bridges:
+        if stop_event.is_set():
+            return
+        try:
+            ok, speed = await check_tor_bridge(
+                bridge, proxy_type, TOR_BOOTSTRAP_TIMEOUT
+            )
+        except asyncio.CancelledError:
+            raise
+        except RuntimeError:
+            ok, speed = False, 0.0
+        except Exception:
+            ok, speed = False, 0.0
+        report(bridge, ok, speed)
+
+
+async def _http_shard(
+    proxies: List[str],
+    proxy_type: str,
+    per_thread: int,
+    report: ResultCallback,
+    stop_event: threading.Event,
+) -> None:
     connector = aiohttp.TCPConnector(
-        limit=max_concurrent * 2,
+        limit=per_thread * 2,
         ssl=False,
-        limit_per_host=max_concurrent,
+        limit_per_host=per_thread,
         ttl_dns_cache=600,
         keepalive_timeout=30,
         enable_cleanup_closed=True,
     )
+    session_timeout = aiohttp.ClientTimeout(
+        total=HTTP_CHECK_SESSION_TIMEOUT, connect=HTTP_CHECK_CONNECT_TIMEOUT
+    )
+    semaphore = asyncio.Semaphore(per_thread)
 
-    test_url = None
-    working_list = []
-    failed = 0
-    checked = 0
-    lock = asyncio.Lock()
+    async with aiohttp.ClientSession(
+        connector=connector, timeout=session_timeout, read_bufsize=8192
+    ) as session:
 
-    progress_columns = [
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("[cyan]{task.fields[status]}[/cyan]"),
-    ]
+        async def one(proxy: str) -> None:
+            if stop_event.is_set():
+                return
+            async with semaphore:
+                if stop_event.is_set():
+                    return
+                try:
+                    ok, speed = await check_proxy(
+                        session,
+                        proxy,
+                        proxy_type,
+                        test_url=None,
+                        timeout=HTTP_CHECK_REQUEST_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    ok, speed = False, 0.0
+                report(proxy, ok, speed)
 
-    with Progress(*progress_columns, console=console) as progress:
-        task = progress.add_task(
-            f"[green]Checking {proxy_type}...",
-            total=len(proxies_list),
-            status=f"[yellow]0/{len(proxies_list)}[/yellow] | [red]✗ 0[/red]",
-        )
-
-        async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=aiohttp.ClientTimeout(total=6, connect=1.5),
-            read_bufsize=8192,
-        ) as session:
-            semaphore = asyncio.Semaphore(max_concurrent)
-
-            async def bounded_check(p):
-                nonlocal checked, failed
-                async with semaphore:
-                    try:
-                        ok, speed = await check_proxy(
-                            session, p, proxy_type, test_url=test_url, timeout=3
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        ok, speed = False, 0.0
-
-                    checked += 1
-                    if not ok:
-                        failed += 1
-
-                    working = checked - failed
-                    try:
-                        progress.update(
-                            task,
-                            advance=1,
-                            status=f"[cyan]{checked}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working}[/green] | [red]✗{failed}[/red]",
-                        )
-                    except Exception:
-                        pass
-
-                    if show_progress:
-                        if ok and speed > 0:
-                            console.print(
-                                f"[green]✓[/green] [cyan]{p[:50]}[/cyan] [magenta]{speed}ms[/magenta]"
-                            )
-                        else:
-                            console.print(f"[red]✗[/red] [dim]{p[:50]}[/dim]")
-
-                    if ok and speed > 0:
-                        async with lock:
-                            working_list.append((p, speed))
-
-                    return p, ok, speed
-
-            tasks = [asyncio.create_task(bounded_check(p)) for p in proxies_list]
-
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            except asyncio.CancelledError:
-                for t in tasks:
-                    if not t.done():
-                        t.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-    working_list.sort(key=lambda x: x[1])
-    return working_list
+        await asyncio.gather(*(one(p) for p in proxies), return_exceptions=True)
 
 
-async def check_with_singbox_batch(
-    proxies: List[Tuple[str, str]],
-    timeout: int = 10,
-    max_workers: int = 8,
-) -> List[Tuple[str, str, bool, float]]:
-    if not proxies:
-        return []
+async def _singbox_precheck(
+    proxies: List[str],
+    proxy_type: str,
+    report: ResultCallback,
+    stop_event: threading.Event,
+) -> List[str]:
+    """Mass TCP precheck: drop unreachable hosts before spending a sing-box
+    process on them. Returns links that survived (in arbitrary order)."""
+    semaphore = asyncio.Semaphore(SINGBOX_PRECHECK_CONCURRENT)
+    alive: List[str] = []
 
-    from checker import _check_singbox_async
-    from config import SINGBOX_POOL_SIZE
-    from utils import get_free_port
-
-    max_workers = max_workers or SINGBOX_POOL_SIZE
-    semaphore = asyncio.Semaphore(max_workers)
-
-    async def check_one(proxy_tuple):
+    async def one(proxy: str) -> None:
+        if stop_event.is_set():
+            return
+        if proxy_type not in TCP_PRECHECK_TYPES:
+            alive.append(proxy)
+            return
+        server_host, server_port = get_link_server(proxy, proxy_type)
+        if not server_host or not server_port:
+            # Unparseable link: let the full check report it dead.
+            alive.append(proxy)
+            return
         async with semaphore:
-            link, ptype = proxy_tuple
+            if stop_event.is_set():
+                return
+            try:
+                pre_ok, _ = await tcp_precheck(server_host, server_port)
+            except Exception:
+                pre_ok = False
+        if pre_ok:
+            alive.append(proxy)
+        else:
+            report(proxy, False, 0.0)
+
+    await asyncio.gather(*(one(p) for p in proxies), return_exceptions=True)
+    return alive
+
+
+async def _singbox_shard(
+    proxies: List[str],
+    proxy_type: str,
+    per_thread: int,
+    report: ResultCallback,
+    stop_event: threading.Event,
+) -> None:
+    semaphore = asyncio.Semaphore(per_thread)
+
+    async def one(proxy: str) -> None:
+        if stop_event.is_set():
+            return
+        async with semaphore:
+            if stop_event.is_set():
+                return
             port = get_free_port()
             try:
                 result = await asyncio.wait_for(
-                    _check_singbox_async(link, ptype, port, timeout),
-                    timeout=timeout + 5,
+                    _check_singbox_async(
+                        proxy,
+                        proxy_type,
+                        port,
+                        SINGBOX_CHECK_TIMEOUT,
+                        skip_precheck=True,
+                    ),
+                    timeout=SINGBOX_CHECK_TIMEOUT + 5,
                 )
-                return result
-            except:
-                return (link, ptype, False, 0.0)
-
-    tasks = [check_one(p) for p in proxies]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    valid_results = []
-    for r in results:
-        if isinstance(r, tuple) and len(r) == 4:
-            valid_results.append(r)
-
-    return valid_results
-
-
-async def check_tor_parallel(
-    proxies_list: List[str],
-    proxy_type: str,
-) -> List[Tuple[str, float]]:
-    """Проверка Tor-мостов с низкой конкурентностью.
-
-    Каждый мост = отдельный процесс tor + bootstrap до 100 (десятки секунд).
-    50-100 параллельных tor уронят машину, поэтому семафор маленький
-    (см. TOR_MAX_CONCURRENT), а таймаут всегда полный bootstrap-таймаут.
-    Зависимости проверяем один раз до старта, а не на каждый мост.
-    """
-    if not proxies_list:
-        return []
-
-    dep_error = _check_tor_dependencies(proxy_type.upper())
-    if dep_error:
-        console.print(f"[red][!] {dep_error}[/red]")
-        return []
-
-    results: List[Tuple[str, float]] = []
-    working_count = 0
-    failed_count = 0
-    start_time = time.time()
-
-    semaphore = asyncio.Semaphore(TOR_MAX_CONCURRENT)
-    lock = asyncio.Lock()
-
-    progress_columns = [
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("[cyan]{task.fields[status]}[/cyan]"),
-    ]
-
-    async def check_one(bridge: str):
-        nonlocal working_count, failed_count
-        async with semaphore:
-            try:
-                ok, speed = await check_tor_bridge(
-                    bridge, proxy_type.upper(), TOR_BOOTSTRAP_TIMEOUT
-                )
-            except RuntimeError:
-                ok, speed = False, 0.0
+                ok, speed = result[2], result[3]
             except asyncio.CancelledError:
                 raise
             except Exception:
                 ok, speed = False, 0.0
+            report(proxy, ok, speed)
 
-            async with lock:
-                if ok and speed > 0:
-                    working_count += 1
-                    results.append((bridge, speed))
-                    console.print(
-                        f"[green]✓[/green] [cyan]{bridge[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
-                    )
-                else:
-                    failed_count += 1
-                    console.print(f"[red]x[/red] [cyan]{bridge[:60]}...[/cyan]")
+    await asyncio.gather(*(one(p) for p in proxies), return_exceptions=True)
 
-                progress.update(
-                    task,
-                    advance=1,
-                    status=f"[cyan]{working_count + failed_count}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
-                )
 
-    with Progress(*progress_columns, console=console) as progress:
-        task = progress.add_task(
-            f"[green]Checking {proxy_type} (tor bootstrap, ≤{TOR_MAX_CONCURRENT} parallel)...",
-            total=len(proxies_list),
-            status=f"[yellow]0/{len(proxies_list)}[/yellow] | [red]✗ 0[/red]",
+def _submit(executor, registry: _LoopRegistry, factories) -> list:
+    return [
+        executor.submit(_thread_entry, factory, registry) for factory in factories
+    ]
+
+
+def _tor_factories(proxies, proxy_type, report, stop_event, max_workers):
+    count = _shard_count(proxies, min(max_workers, TOR_MAX_CONCURRENT))
+    return [
+        functools.partial(_tor_shard, shard, proxy_type, report, stop_event)
+        for shard in _split_round_robin(proxies, count)
+        if shard
+    ]
+
+
+def _http_factories(proxies, proxy_type, report, stop_event, max_workers):
+    count = _shard_count(proxies, max_workers)
+    per_thread = max(1, (HTTP_MAX_CONCURRENT + count - 1) // count)
+    return [
+        functools.partial(
+            _http_shard, shard, proxy_type, per_thread, report, stop_event
         )
+        for shard in _split_round_robin(proxies, count)
+        if shard
+    ]
 
-        tasks = [asyncio.create_task(check_one(p)) for p in proxies_list]
 
-        try:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        except asyncio.CancelledError:
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
+def run_checks(
+    proxies_list: List[str],
+    proxy_type: str,
+    on_result: ResultCallback | None = None,
+    stop_event: threading.Event | None = None,
+    threads: int | None = None,
+) -> List[Tuple[str, float]]:
+    """Parallel checker shared by the CLI and the GUI.
+
+    Runs checks in a pool of OS threads, each thread executing its own
+    asyncio event loop, and returns working proxies sorted by latency.
+
+    `on_result(proxy, ok, speed_ms)` is called from worker threads for every
+    checked proxy, so callers must synchronize their UI updates themselves.
+    Setting `stop_event` cancels in-flight checks and stops dispatching new
+    ones; partial results are returned. KeyboardInterrupt does the same.
+    """
+    if not proxies_list:
+        return []
+
+    ptype = proxy_type.upper()
+    if ptype in TOR_TYPES:
+        dep_error = _check_tor_dependencies(ptype)
+        if dep_error:
+            raise RuntimeError(dep_error)
+    if ptype in SINGBOX_TYPES and not SINGBOX_INSTALLED:
+        raise RuntimeError(f"sing-box not found at {SINGBOX_PATH} - run ./setup.sh")
+
+    if stop_event is None:
+        stop_event = threading.Event()
+
+    results: List[Tuple[str, float]] = []
+    results_lock = threading.Lock()
+
+    def report(proxy: str, ok: bool, speed: float) -> None:
+        if ok and speed > 0:
+            with results_lock:
+                results.append((proxy, speed))
+        if on_result is not None:
             try:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                on_result(proxy, ok, speed)
             except Exception:
                 pass
+
+    max_workers = threads if threads and threads > 0 else CHECK_THREADS
+
+    done_event = threading.Event()
+    registry = _LoopRegistry()
+    watcher = threading.Thread(
+        target=_watch_stop, args=(stop_event, done_event, registry), daemon=True
+    )
+    watcher.start()
+
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers, thread_name_prefix="proxy-check"
+    )
+    futures: list = []
+    try:
+        if ptype in TOR_TYPES:
+            futures = _submit(
+                executor,
+                registry,
+                _tor_factories(proxies_list, ptype, report, stop_event, max_workers),
+            )
+            concurrent.futures.wait(futures)
+        elif ptype in SINGBOX_TYPES:
+            precheck_future = executor.submit(
+                _thread_entry,
+                functools.partial(
+                    _singbox_precheck, proxies_list, ptype, report, stop_event
+                ),
+                registry,
+            )
+            futures = [precheck_future]
+            concurrent.futures.wait(futures)
+
+            if not stop_event.is_set():
+                alive = precheck_future.result() or []
+                if alive:
+                    count = _shard_count(alive, max_workers)
+                    per_thread = max(
+                        1, (SINGBOX_MAX_CONCURRENT + count - 1) // count
+                    )
+                    futures += _submit(
+                        executor,
+                        registry,
+                        [
+                            functools.partial(
+                                _singbox_shard,
+                                shard,
+                                ptype,
+                                per_thread,
+                                report,
+                                stop_event,
+                            )
+                            for shard in _split_round_robin(alive, count)
+                            if shard
+                        ],
+                    )
+                    concurrent.futures.wait(futures)
+        else:
+            futures = _submit(
+                executor,
+                registry,
+                _http_factories(proxies_list, ptype, report, stop_event, max_workers),
+            )
+            concurrent.futures.wait(futures)
+    except KeyboardInterrupt:
+        stop_event.set()
+        registry.cancel_all()
+        try:
+            concurrent.futures.wait(futures)
+        except KeyboardInterrupt:
+            pass
+    finally:
+        done_event.set()
+        executor.shutdown(wait=True)
+        watcher.join(timeout=1)
 
     try:
         results.sort(key=lambda x: x[1])
     except Exception:
         pass
-    elapsed = time.time() - start_time
-    console.print(
-        f"[cyan][*] Tor check done: {len(results)}/{len(proxies_list)} in {elapsed:.0f}s[/cyan]"
-    )
     return results
-
-
-async def check_all_parallel(
-    proxies_list: List[str],
-    proxy_type: str,
-    batch_size: int = DEFAULT_WORKERS,
-) -> List[Tuple[str, float]]:
-    if not proxies_list:
-        return []
-
-    if proxy_type.upper() in TOR_TYPES:
-        return await check_tor_parallel(proxies_list, proxy_type)
-
-    if proxy_type.upper() in ["HTTP", "HTTPS", "SOCKS4", "SOCKS5"]:
-        return await check_proxies_async(proxies_list, proxy_type, show_progress=True)
-
-    from config import SINGBOX_POOL_SIZE
-
-    singbox_types = ["VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS"]
-    if proxy_type.upper() in singbox_types:
-        proxy_tuples = [(p, proxy_type) for p in proxies_list]
-
-        results = []
-        working_count = 0
-        failed_count = 0
-        start_time = time.time()
-
-        max_concurrent = min(batch_size, max(8, SINGBOX_POOL_SIZE))
-        semaphore = asyncio.Semaphore(max_concurrent)
-        lock = asyncio.Lock()
-
-        progress_columns = [
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TextColumn("[cyan]{task.fields[status]}[/cyan]"),
-        ]
-
-        async def check_one(proxy_tuple):
-            nonlocal working_count, failed_count
-            async with semaphore:
-                link, ptype = proxy_tuple
-                ok, speed = await check_with_singbox(
-                    link, ptype, timeout=SINGBOX_CHECK_TIMEOUT
-                )
-
-                async with lock:
-                    if ok and speed > 0:
-                        working_count += 1
-                        results.append((link, speed))
-
-                        console.print(
-                            f"[green]✓[/green] [cyan]{link[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
-                        )
-
-                    else:
-                        failed_count += 1
-                        console.print(
-                            f"[red]x[/red] [cyan]{link[:60]}...[/cyan] [magenta]{speed}ms[/magenta]"
-                        )
-
-                    checked = working_count + failed_count
-                    elapsed = time.time() - start_time
-                    if checked > 0:
-                        eta_sec = int(
-                            (elapsed / checked) * (len(proxies_list) - checked)
-                        )
-                        eta_str = f"ETA: {eta_sec // 60}m"
-                    else:
-                        eta_str = ""
-
-                    progress.update(
-                        task,
-                        advance=1,
-                        status=f"[cyan]{checked}[/cyan]/[yellow]{len(proxies_list)}[/yellow] | [green]✓{working_count}[/green] | [red]✗{failed_count}[/red]",
-                    )
-
-        with Progress(*progress_columns, console=console) as progress:
-            task = progress.add_task(
-                f"[green]Checking {proxy_type}...",
-                total=len(proxies_list),
-                status=f"[yellow]0/{len(proxies_list)}[/yellow] | [red]✗ 0[/red]",
-            )
-
-            tasks = [asyncio.create_task(check_one(p)) for p in proxy_tuples]
-
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            except asyncio.CancelledError:
-                for t in tasks:
-                    if not t.done():
-                        t.cancel()
-                try:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                except:
-                    pass
-
-        try:
-            results.sort(key=lambda x: x[1])
-        except:
-            pass
-        return results
-
-    return await check_proxies_async(proxies_list, proxy_type, show_progress=True)
