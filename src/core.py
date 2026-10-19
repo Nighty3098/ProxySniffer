@@ -38,7 +38,7 @@ TOR_TYPES = ("TOR_OBFS4", "TOR_WEBTUNNEL", "TOR_SNOWFLAKE")
 SINGBOX_TYPES = ("VMESS", "VLESS", "TROJAN", "HYSTERIA2", "SHADOW_SOCKS")
 
 from fetcher import fetch_proxies
-from parsers import parse_mtproto_link, parse_proxy
+from parsers import filter_and_dedupe, parse_mtproto_link, parse_proxy
 from utils import get_free_port
 
 console = Console()
@@ -48,7 +48,6 @@ async def load_proxies_from_sources(
     proxy_sources: dict, proxy_type: str, quiet: bool = False
 ) -> List[str]:
     sources = proxy_sources.get(proxy_type.upper(), [])
-    all_proxies: set = set()
 
     if not quiet:
         console.print(
@@ -58,15 +57,26 @@ async def load_proxies_from_sources(
     tasks = [fetch_proxies(url) for url in sources]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    all_lines: List[str] = []
     for result in results:
         if isinstance(result, list):
-            all_proxies.update(result)
+            all_lines.extend(result)
 
-    unique_proxies = list(all_proxies)
+    # Sources are frequently mixed: keep only entries of the requested
+    # protocol and deduplicate by config identity before any checks start.
+    unique_proxies, filtered_out, duplicates = filter_and_dedupe(
+        all_lines, proxy_type
+    )
+
     if not quiet:
         console.print(
             f"[green][+] Loaded {len(unique_proxies)} unique {proxy_type} proxies[/green]"
         )
+        if filtered_out or duplicates:
+            console.print(
+                f"[yellow][-] Filtered out {filtered_out} links of other protocols, "
+                f"removed {duplicates} duplicates[/yellow]"
+            )
     return unique_proxies
 
 

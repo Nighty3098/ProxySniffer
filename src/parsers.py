@@ -379,3 +379,171 @@ def parse_vless_link(link: str) -> Optional[Dict]:
     except Exception:
         pass
     return None
+
+
+# --- Protocol filtering and deduplication for downloaded lists ---
+
+# scheme prefix -> protocol group the link belongs to
+SCHEME_PROTOCOLS = {
+    "vless://": "VLESS",
+    "vmess://": "VMESS",
+    "trojan://": "TROJAN",
+    "hysteria2://": "HYSTERIA2",
+    "ss://": "SHADOW_SOCKS",
+    "http://": "HTTP",
+    "https://": "HTTPS",
+    "socks4://": "SOCKS4",
+    "socks4h://": "SOCKS4",
+    "socks5://": "SOCKS5",
+    "socks5h://": "SOCKS5",
+}
+
+# first word of a bridge line -> protocol group
+BRIDGE_PROTOCOLS = {
+    "obfs4": "TOR_OBFS4",
+    "webtunnel": "TOR_WEBTUNNEL",
+    "snowflake": "TOR_SNOWFLAKE",
+    "snowflake-direct": "TOR_SNOWFLAKE",
+}
+
+# bare `host:port` lines are valid for these groups
+HOST_PORT_PROTOCOLS = ("HTTP", "HTTPS", "SOCKS4", "SOCKS5")
+
+_SHARE_PARSERS = {
+    "VLESS": parse_vless_link,
+    "VMESS": parse_vmess_link,
+    "TROJAN": parse_trojan_link,
+    "HYSTERIA2": parse_hysteria2_link,
+    "SHADOW_SOCKS": parse_shadowsocks_link,
+}
+
+# Keys that only describe the entry (remark/name) and must not make two
+# otherwise identical configs look different.
+_COSMETIC_KEYS = {"name", "ps", "remark", "remarks", "tag", "label", "group", "sub"}
+
+_HOST_KEYS = ("server", "sni", "host", "peer", "servername")
+
+
+def detect_protocol(line: str) -> Optional[str]:
+    """Best-effort protocol detection for a downloaded line.
+
+    Returns a protocol name, "HOSTPORT" for bare `host:port` lines, or None.
+    """
+    stripped = strip_bridge_prefix(line.strip())
+    low = stripped.lower()
+    if not low:
+        return None
+    if "t.me/proxy" in low or low.startswith("tg://proxy"):
+        return "MTPROTO"
+
+    for scheme, protocol in SCHEME_PROTOCOLS.items():
+        if low.startswith(scheme):
+            return protocol
+
+    first = low.split()[0]
+    if first in BRIDGE_PROTOCOLS:
+        return BRIDGE_PROTOCOLS[first]
+
+    if low.count(":") == 1:
+        return "HOSTPORT"
+    return None
+
+
+def _host_port_key(line: str):
+    """Dedupe key for a `host:port` (optionally scheme-prefixed) entry."""
+    text = line.strip()
+    for scheme in SCHEME_PROTOCOLS:
+        if text.lower().startswith(scheme):
+            text = text[len(scheme) :]
+            break
+    host, _, port_str = text.rpartition(":")
+    host = host.strip()
+    port_str = port_str.split("/", 1)[0].strip()
+    if not host or any(c.isspace() for c in host) or not port_str.isdigit():
+        return None
+    port = int(port_str)
+    if not 1 <= port <= 65535:
+        return None
+    return ("HOSTPORT", host.lower(), port)
+
+
+def _fingerprint(data: Dict, prefix: str) -> tuple:
+    """Canonical identity of a parsed config: all connectivity-relevant
+    parameters, ignoring remarks and parameter order."""
+    items = []
+    for key, value in data.items():
+        if key in _COSMETIC_KEYS:
+            continue
+        if isinstance(value, dict):
+            value = tuple(sorted((k, str(v)) for k, v in value.items()))
+        text = str(value).strip()
+        if text == "":
+            continue
+        if key in _HOST_KEYS:
+            text = text.lower()
+        items.append((key, text))
+    return (prefix, *sorted(items))
+
+
+def _entry_key(line: str, proxy_type: str):
+    """Return a dedupe key if `line` is a valid entry for `proxy_type`."""
+    line = strip_bridge_prefix(line.strip())
+    detected = detect_protocol(line)
+    if detected is None:
+        return None
+
+    if proxy_type in HOST_PORT_PROTOCOLS:
+        if detected == "HOSTPORT" or detected == proxy_type:
+            return _host_port_key(line)
+        return None
+
+    if proxy_type == "MTPROTO":
+        if detected != "MTPROTO":
+            return None
+        data = parse_mtproto_link(line)
+        return _fingerprint(data, "MTPROTO") if data else None
+
+    if proxy_type in BRIDGE_PROTOCOLS.values():
+        if detected != proxy_type:
+            return None
+        data = parse_bridge_line(line)
+        if not data or BRIDGE_PROTOCOLS.get(data.get("protocol", "")) != proxy_type:
+            return None
+        return _fingerprint(data, proxy_type)
+
+    parser = _SHARE_PARSERS.get(proxy_type)
+    if parser is not None:
+        if detected != proxy_type:
+            return None
+        data = parser(line)
+        return _fingerprint(data, proxy_type) if data else None
+
+    return None
+
+
+def filter_and_dedupe(lines, proxy_type: str):
+    """Keep only valid entries of `proxy_type` and drop duplicates.
+
+    Duplicates are detected by config identity (server, port, credentials,
+    transport parameters), so the same proxy with a different remark, query
+    order or URL-encoding is removed.
+
+    Returns (kept, filtered_out, duplicates).
+    """
+    kept = []
+    seen = set()
+    filtered_out = 0
+    duplicates = 0
+
+    for line in lines:
+        key = _entry_key(line, proxy_type.upper())
+        if key is None:
+            filtered_out += 1
+            continue
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        kept.append(line)
+
+    return kept, filtered_out, duplicates

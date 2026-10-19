@@ -217,6 +217,15 @@ VLESS links that sing-box cannot faithfully reproduce are intentionally reported
 - encrypted VLESS (`encryption` other than `none`)
 - REALITY without `pbk`, and unsupported `flow` values
 
+## Subscription Filtering and Deduplication
+
+Downloaded sources are frequently mixed, so before checking:
+
+- every line must match the selected protocol group and parse successfully — otherwise it is dropped: `vless://`, `vmess://`, `trojan://`, `hysteria2://`, `ss://` links, `t.me/proxy` links for MTProto, `obfs4`/`webtunnel`/`snowflake` bridge lines for Tor, `http(s)://` / `socks4(5)://` lines and bare `host:port` entries for the corresponding HTTP/SOCKS group;
+- the remaining entries are deduplicated by config identity (server, port, credentials, transport parameters). The same proxy with a different remark, query-parameter order or URL-encoding is checked only once.
+
+The CLI prints how many foreign links and duplicates were removed; the GUI applies the same filtering silently.
+
 ## Parallel Checking
 
 Both the CLI and the GUI use the same threaded checking engine (`core.run_checks`):
